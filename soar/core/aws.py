@@ -17,11 +17,15 @@ _CONFIG = Config(
     retries={"max_attempts": 3, "mode": "standard"},
 )
 
-ClientFactory = Callable[[str], Any]
+# For best-effort reads that must never eat the containment budget (PB-03's
+# pre-state capture): one attempt, short timeouts.
+QUICK = Config(connect_timeout=1, read_timeout=2, retries={"max_attempts": 1, "mode": "standard"})
+
+ClientFactory = Callable[..., Any]
 
 
-def client(service: str) -> Any:
-    return boto3.client(service, config=_CONFIG)
+def client(service: str, config: Config | None = None) -> Any:
+    return boto3.client(service, config=config or _CONFIG)
 
 
 def error_code(exc: ClientError) -> str:

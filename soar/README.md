@@ -50,7 +50,14 @@ Evaluate **in this order**. The first matching rule decides.
 4. An unknown resource type gives `allowed=false`.
 5. Always return `dry_run` as a boolean. The router uses it to choose `CONTAINED` or `WOULD_CONTAIN_DRY_RUN`.
 
-IAM enforces rule 3 independently: every mutating permission is conditioned on the scope tag. A bug in the guard can't widen what a playbook may touch.
+IAM backs rule 3 independently, so a bug in the guard can't widen what a playbook may touch:
+
+- EC2 instance and volume mutations and the IAM user mutations are conditioned on the scope tag.
+- Role-session revocation is limited to `REVOCABLE_ROLE_ARNS` and needs the SOAR target boundary.
+- NACL entries are limited to the given NACL ARNs.
+- PB-03 is limited by the bucket-name prefix (gap 12).
+
+All three playbooks also re-check the tag in code before acting. `SCOPE_TAG_PARAM` holds the same tag for operators; the code reads it from `SCOPE_TAG_KEY` / `SCOPE_TAG_VALUE`.
 
 ## PB-01 notes
 
@@ -61,11 +68,24 @@ IAM enforces rule 3 independently: every mutating permission is conditioned on t
   - The same function handles `InstanceCredentialExfiltration*` findings, which arrive with `resourceType = AccessKey`. Get the instance id from `accessKeyDetails.principalId`.
 - **Established connections (gap 10): decided in ADR-0003.** Security groups are stateful, so the swap alone leaves tracked connections open. Before the swap, PB-01 adds deny-all entries (rule `QUARANTINE_NACL_RULE`, default 10) to the dedicated worker-tier NACL. It may only add entries, and only to NACLs in `QUARANTINE_NACL_IDS`. It also sets termination and stop protection. `contained: true` requires every one of these to read back correctly. Recovery is manual: see ADR-0003.
 - Single-ENI instances only (a multi-ENI swap would need more IAM). ASG membership is recorded for the analyst, not changed.
+- **Credential exfiltration** (`InstanceCredentialExfiltration*`): revoking the stolen role session *is* the containment. The instance must have a role, and its `RoleId` must equal the role id in the finding's `principalId`. Otherwise PB-01 refuses before making any change. The revocation is read back (`iam:GetRolePolicy`) as `roleSessionsRevoked`.
+- Verification re-reads AWS up to 3 times, 1 s apart (eventual consistency), before it reports "not contained".
 - `snapshot` runs **after** CONTAINED:
   - Snapshot each in-scope volume. Tags are written at creation.
   - Write a manifest to `EVIDENCE_BUCKET` with the snapshot IDs, actor (the execution ARN) and UTC times. Upload it with `ChecksumAlgorithm=SHA256`.
   - Store the returned SHA-256 **on the incident row** (`UpdateItem`). A file cannot contain its own hash.
   - The manifest plus the hash on the row form the chain-of-custody record.
+
+## PB-02 and PB-03 notes
+
+- **PB-02** revokes the user's sessions **and** deactivates the key, and reads both back.
+  - Deactivating a key doesn't kill the `GetSessionToken` / `GetFederationToken` credentials already minted from it. So if the session revoke is refused (the user lacks the SOAR target boundary), the incident is **not** contained.
+  - A temporary (`ASIA…`) key in the finding deactivates the user's long-term keys instead.
+  - Not covered: sessions of roles the user assumed.
+- **PB-03** acts only on `Policy:S3/Bucket*` findings. The router sends other S3 findings to an analyst (`NoPlaybook`), because Block Public Access doesn't stop an authenticated principal.
+  - `restore` captures the pre-state with short single-attempt reads, restores all four BPA flags, verifies, and returns the pre-state.
+  - The router step `PB03Evidence` (action `evidence`) stores it as hashed evidence **after** CONTAINED, outside the MTTC window.
+- **Evidence records are append-only.** `evidenceRecords` collects every manifest. `evidenceSha256` keeps the first hash, so a re-run never displaces the original evidence.
 
 ## Develop
 

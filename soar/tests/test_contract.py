@@ -23,8 +23,12 @@ def tf_handlers() -> list[str]:
 
 
 def tf_env_vars() -> set[str]:
-    block = PLAYBOOKS_TF.read_text(encoding="utf-8").split("lambda_env = {", 1)[1].split("}", 1)[0]
-    return set(re.findall(r"^\s*([A-Z_]+)\s*=", block, flags=re.MULTILINE))
+    # The block ends at the first line that is only "}" (audit A10: "${...}"
+    # inside a value must not end it early).
+    text = PLAYBOOKS_TF.read_text(encoding="utf-8")
+    block = re.search(r"lambda_env = \{\n(.*?)^\s*\}\s*$", text, flags=re.MULTILINE | re.DOTALL)
+    assert block, "lambda_env block not found"
+    return set(re.findall(r"^\s*([A-Z_]+)\s*=", block.group(1), flags=re.MULTILINE))
 
 
 def test_every_terraform_handler_resolves() -> None:

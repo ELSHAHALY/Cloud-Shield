@@ -60,7 +60,9 @@ def portscan(instance_id: str, **kw: Any) -> dict[str, Any]:
     )
 
 
-def exfiltration(instance_id: str, **kw: Any) -> dict[str, Any]:
+def exfiltration(
+    instance_id: str, role_id: str = "AROAEXAMPLEFAKEROLEID", **kw: Any
+) -> dict[str, Any]:
     return _event(
         "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS",
         8.0,
@@ -68,7 +70,7 @@ def exfiltration(instance_id: str, **kw: Any) -> dict[str, Any]:
             "resourceType": "AccessKey",
             "accessKeyDetails": {
                 "accessKeyId": "FAKESTSKEYID00000001",
-                "principalId": f"AROAEXAMPLEFAKEROLEID:{instance_id}",
+                "principalId": f"{role_id}:{instance_id}",
                 "userName": "cs-dev-report-worker",
                 "userType": "AssumedRole",
             },

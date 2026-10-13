@@ -147,7 +147,7 @@ def test_exfiltration_targets_the_instance() -> None:
         SafetyGuard(SETTINGS, tags, lambda: False).evaluate(events.exfiltration(INSTANCE)).allowed
         is True
     )
-    assert seen == [Ec2Target(INSTANCE)]
+    assert seen == [Ec2Target(INSTANCE, session_role_id="AROAEXAMPLEFAKEROLEID")]
 
 
 # ---------------------------------------------------------------- rule 4

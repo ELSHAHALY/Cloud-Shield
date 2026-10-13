@@ -1,9 +1,9 @@
 # CloudShield — Handoff
 
-**As of:** 14 Oct 2026  **Repo state:** 4 commits on `main`, not yet pushed to GitHub
+**As of:** 14 Oct 2026 (updated after the S3 SOAR build)  **Repo state:** scaffold on `main`; CI fix and SOAR work on branches, PRs pending (§10)
 **For:** @ELSHAHALY (S1), @YasseenAbdelghany (S2), @ahklsfg (S3), and anyone picking this up next.
 
-This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the two ADRs.
+This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the three ADRs.
 
 ---
 
@@ -14,11 +14,11 @@ This file records everything done so far, every decision made, what is proven, w
 | Design (Phase 3) | Reviewed. Sound, with gaps documented (§3). |
 | Repo scaffold | **Done.** CI, bootstrap, 5 Terraform modules, tests, docs. |
 | Independent security audit | **Done.** PASS WITH FIXES; all major findings fixed. |
-| Pushed to GitHub | **No.** The code exists as a zip (`Cloud-Shield-scaffold-v2.zip` or later). `ELSHAHALY/Cloud-Shield` still holds only the original README. |
+| Pushed to GitHub | **Yes** (14 Oct, `1019669`). History restarts there: the zip carried no `.git`. |
 | Deployed to AWS | **No.** Nothing has been applied. |
-| `terraform validate` / `test` | **Not run yet.** Blocked in the build environment; runs on the first CI push. |
+| `terraform validate` / `test` | **Pass locally** (TF 1.16.5, §10). The first CI run failed `terraform test`; fixed on `fix/ci-terraform-test-mocks`. |
 | App code (S2) | Not started. |
-| SOAR Lambda code (S3) | Not started. The infrastructure for it is ready and switched off. |
+| SOAR Lambda code (S3) | **Built and audited** on `feat/s3-soar-playbooks` (§10). Still switched off: no package uploaded, dry-run on. |
 | **Team-size waiver (G1)** | **Unknown. This is still the top risk (R1, H×H).** |
 
 ---
@@ -110,7 +110,7 @@ Of the minor findings, these were fixed: the Lambda concurrency default is now u
 | 7 | One account has weaker isolation than the designed Security account | Accepted (ADR-0001); present multi-account as the target state |
 | 8 | The plan role uses `ReadOnlyAccess` | Accepted; tighten in Sprint 3 |
 | 9 | No apply role in CI | Deliberate, for now |
-| 10 | **PB-01 security-group swap doesn't cut existing connections** | **Open (S3).** Needs an SSM process stop or a NACL step, plus the matching IAM. |
+| 10 | **PB-01 security-group swap doesn't cut existing connections** | **Handled (ADR-0003):** a deny-all on the dedicated worker-tier NACL, add-only IAM. Residual risk: DNS via the Resolver isn't filtered (follow-up: DNS Firewall). |
 | 11 | Tenant isolation lives in the API, not IAM | Accepted; stretch goal: STS session tags with `LeadingKeys` |
 | 12 | PB-03 is bounded by bucket-name prefix, not tag | Accepted; the scenario C bucket must be named `cloudshield-dev-*` |
 | 13 | Sample findings conflict with the safety guard | Resolved: dry-run only |
@@ -131,6 +131,9 @@ Of the minor findings, these were fixed: the Lambda concurrency default is now u
 | 8 Oct | **MTTC** runs from the EventBridge event `time` to the `MarkContained` state. GuardDuty's `createdAt` is also stored. Evidence capture runs after CONTAINED and doesn't count. | ADR-0002 §3 |
 | 8 Oct | Ingress: **internal NLB with a REST API Gateway VPC Link** | ADR-0002 §4 |
 | 8 Oct | PB-01 is the flagship playbook; finish it end to end before the others | soar/README.md |
+| 14 Oct | Lambda runtime stays **python3.13** (as in the audited TF), not 3.12 | soar/pyproject.toml |
+| 14 Oct | Gap 10: **subnet-level deny-all on a dedicated worker NACL**. A per-IP NACL rule can't match the instance's own traffic; an SSM kill was rejected. | ADR-0003 |
+| 14 Oct | PB-03 handles **only `Policy:S3/Bucket*`**; other S3 findings go to an analyst. Its evidence is a post-CONTAINED router step. | state-machine.tf, soar/README.md |
 
 ---
 
@@ -239,3 +242,60 @@ terraform destroy
 | Attack-sim rules (AWS Abuse risk R4) | `attack-sim/README.md` |
 | Ownership | `.github/CODEOWNERS` |
 | Source design | `CloudShield_Capstone_Plan_and_Architecture.pdf` (not in repo) |
+
+---
+
+## 10. Update 14 Oct: CI fix + S3 SOAR build
+
+### CI (branch `fix/ci-terraform-test-mocks`)
+
+- **What failed:** the first run on `1019669` failed only in the iac gate at `terraform test`. The other gates passed.
+- **Cause:** a bare `mock_provider "aws" {}` returns random strings, so every IAM policy JSON and every ARN failed provider validation.
+- **Fix:** pin realistic mock values.
+- **Also on this branch:** `docs/runbooks/repo-admin-setup.md`, with `gh` commands for collaborators, repository variables and branch protection (S1).
+
+### SOAR (branch `feat/s3-soar-playbooks`)
+
+**The pipeline:** Planner → Builder → Independent Auditor → fixes → Validator.
+
+**What was built:**
+- `soar/`: the core object model, the safety guard, and PB-01, PB-02 and PB-03.
+- 144 pytest + moto tests at 97% branch coverage.
+- `make package-soar`, which builds a deterministic zip.
+- A hard-failing CI job, `gate: soar (ruff + pytest)`. Semgrep now also runs `p/python`.
+
+**Audit:** PASS WITH FIXES, 3 MAJOR and 9 MINOR findings, all addressed.
+
+| ID | Finding | Fix |
+|---|---|---|
+| A1 | PB-03 marked any S3 finding contained, including exfiltration that BPA can't stop | Router + PB-03 accept `Policy:S3/Bucket*` only |
+| A2 | PB-02 treated a refused session revocation as success | Session revoke is part of `verified`; `ASIA` keys deactivate the long-term keys |
+| A3 | PB-01 could contain credential exfiltration without revoking the stolen role | The role must exist and match the finding's role id; revoke read back via `GetRolePolicy` |
+| A4 | PB-03 evidence counted toward MTTC and could time out | New `PB03Evidence` router step after CONTAINED; single-attempt pre-state reads; timeout 30 s |
+| A5 | Checkov | NACL skips with reasons; `DescribeInstanceAttribute` scoped to instances. Result: 546 passed, 0 failed |
+| A6 | IAM breadth | Evidence writes limited to `incidents/*`; pre-empting NACL entries detected; the rest documented as accepted risk |
+| A7 | ADR-0003 silent on what the NACL can't block | Limits documented |
+| A8 | Retries weren't idempotent | Snapshot reuse; append-only evidence records with the first hash kept; no duplicate `previousGroups` |
+| A9 | No allowance for eventual consistency | Verify retries 3× at 1 s |
+| A10 | Tests couldn't see IAM content | `tests/iam.tftest.hcl` renders real policies, mutation-checked; env-var drift parser fixed |
+| A11 | Docs overclaimed | Corrected |
+| A12 | Revoke cutoff had milliseconds | Whole seconds, rounded up |
+
+**Proven locally** (Windows, CI-pinned versions):
+- ruff passes; pytest 144/144.
+- `terraform fmt` is clean; `validate` passes in all 7 dirs; `test` passes 18/18.
+- Checkov 3.3.26: 0 failed.
+- Gitleaks 8.30.1: no leaks in history.
+- The zip is byte-identical across two builds.
+
+**Not proven:**
+- Semgrep: `semgrep-core` crashes on Windows, so the first PR's CI run is the proof.
+- No AWS apply yet. Live IAM behaviour stays unverified until the dry-run replay below.
+
+### Next for S3
+
+1. Merge both PRs. Add `gate: soar (ruff + pytest)` to the required checks.
+2. Upload the zip to a versioned bucket. Set `soar_playbook_package` with dry-run **on**.
+3. Replay GuardDuty sample findings; each must end `WOULD_CONTAIN_DRY_RUN`. Then run scenario A in dry-run.
+4. Flip dry-run off and measure MTTC.
+5. Follow-ups: a DNS Firewall quarantine (ADR-0003); the honeytoken user with the SOAR target boundary (PB-02 needs it to count as contained).

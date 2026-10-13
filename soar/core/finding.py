@@ -12,12 +12,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 EXFILTRATION_PREFIX = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration"
+# The only S3 findings that Block Public Access actually remediates (audit A1).
+# Data-access findings (Exfiltration:S3/*, Impact:S3/*) by authenticated
+# principals are NOT stopped by BPA and must go to an analyst.
+S3_EXPOSURE_PREFIX = "Policy:S3/Bucket"
 
 _INSTANCE_ID = re.compile(r"^i-(?:[0-9a-f]{8}|[0-9a-f]{17})$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")
 _IAM_USER_NAME = re.compile(r"^[\w+=,.@-]{1,64}$")
 _BUCKET_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _FINDING_ID = re.compile(r"^[\w.:-]{1,128}$")
+_ROLE_ID = re.compile(r"^AROA[A-Z0-9]{8,124}$")
 
 
 class MalformedFindingError(ValueError):
@@ -27,6 +32,9 @@ class MalformedFindingError(ValueError):
 @dataclass(frozen=True)
 class Ec2Target:
     instance_id: str
+    # Set for InstanceCredentialExfiltration*: the role id (AROA...) whose
+    # session was stolen. PB-01 must revoke exactly that role.
+    session_role_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,10 +96,12 @@ def _resolve_target(finding_type: str, resource: dict[str, Any]) -> Target:
         principal = details.get("principalId") if isinstance(details, dict) else None
         if not isinstance(principal, str) or ":" not in principal:
             return UnknownTarget("exfiltration finding without a role-session principalId")
-        session = principal.split(":", 1)[1]
+        role_id, session = principal.split(":", 1)
         if not _INSTANCE_ID.match(session):
             return UnknownTarget("exfiltration session is not an EC2 instance")
-        return Ec2Target(session)
+        if not _ROLE_ID.match(role_id):
+            return UnknownTarget("exfiltration principalId has no valid role id")
+        return Ec2Target(session, session_role_id=role_id)
 
     if resource_type == "Instance":
         details = resource.get("instanceDetails")

@@ -1,6 +1,6 @@
 # S3 · SOAR engine and playbooks: implementation plan
 
-**Branch:** `feat/s3-soar-playbooks` (from `main` @ `1019669`) · **Owner:** @ahklsfg · **Status:** APPROVED 14 Oct: runtime 3.13, subnet deny-all NACL (ADR-0003), run the full pipeline
+**Branch:** `feat/s3-soar-playbooks` (from `main` @ `1019669`) · **Owner:** @ahklsfg · **Status:** BUILT + AUDITED 14 Oct (docs/HANDOFF.md §10). Approved: runtime 3.13, subnet deny-all NACL (ADR-0003)
 
 Sources: `soar/README.md` (handler contract), `infra/terraform/modules/soar/{playbooks,state-machine,main}.tf`, ADR-0002, handoff §3 gap 10.
 

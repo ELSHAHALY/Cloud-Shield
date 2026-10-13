@@ -58,6 +58,25 @@ class IncidentRepository:
             ExpressionAttributeValues={":a": {"L": [_serialize(action)]}, ":empty": {"L": []}},
         )
 
+    def add_evidence(self, incident_id: str, record: dict[str, Any]) -> None:
+        """Append an evidence record. `evidenceSha256` keeps the FIRST hash: a
+        re-run after FAILED captures an already-remediated state and must not
+        displace the original exposure evidence (audit A8)."""
+        self._ddb.update_item(
+            TableName=self._table,
+            Key={"incidentId": {"S": incident_id}},
+            UpdateExpression=(
+                "SET evidenceRecords = list_append(if_not_exists(evidenceRecords, :empty), :r), "
+                "evidenceSha256 = if_not_exists(evidenceSha256, :h)"
+            ),
+            ConditionExpression="attribute_exists(incidentId)",
+            ExpressionAttributeValues={
+                ":r": {"L": [_serialize(record)]},
+                ":empty": {"L": []},
+                ":h": {"S": record["sha256"]},
+            },
+        )
+
     def set_fields(self, incident_id: str, fields: dict[str, Any]) -> None:
         forbidden = _ROUTER_OWNED.intersection(fields)
         if forbidden:

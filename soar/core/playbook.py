@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, ClassVar
 
@@ -34,8 +35,47 @@ class PlaybookError(RuntimeError):
     """The playbook refuses to act, or a precondition for containment failed."""
 
 
+REVOKE_POLICY_NAME = "cloudshield-soar-revoke-older-sessions"
+REVOKE_SID = "CloudShieldRevokeOlderSessions"
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def session_revoke_policy(now: datetime) -> str:
+    """Inline deny on every session issued before now (the console's "Revoke
+    active sessions"). The cutoff is rounded UP to whole seconds in the
+    `...SSZ` form AWS itself uses, so no session issued this second survives."""
+    cutoff = now.astimezone(UTC)
+    if cutoff.microsecond:
+        cutoff = cutoff.replace(microsecond=0) + timedelta(seconds=1)
+    return json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": REVOKE_SID,
+                    "Effect": "Deny",
+                    "Action": "*",
+                    "Resource": "*",
+                    "Condition": {
+                        "DateLessThan": {
+                            "aws:TokenIssueTime": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+
+def is_revoke_policy(document: Any) -> bool:
+    """True if a GetRole/UserPolicy document is our session-revocation deny."""
+    if isinstance(document, str):
+        document = json.loads(document)
+    statements = document.get("Statement", []) if isinstance(document, dict) else []
+    return any(st.get("Sid") == REVOKE_SID and st.get("Effect") == "Deny" for st in statements)
 
 
 class Playbook(ABC):
@@ -47,10 +87,12 @@ class Playbook(ABC):
         settings: Settings,
         clients: aws.ClientFactory = aws.client,
         clock: Callable[[], datetime] = utcnow,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings
         self.clients = clients
         self.clock = clock
+        self.sleep = sleep
         self.incidents = IncidentRepository(settings.incidents_table, clients("dynamodb"))
 
     @classmethod
@@ -78,7 +120,7 @@ class Playbook(ABC):
             self._log(finding, action, result)
             return result
 
-        result = self.run(action, finding)
+        result = self.run(action, finding, state)
         self._log(finding, action, result)
         return result
 
@@ -95,8 +137,21 @@ class Playbook(ABC):
         """What `run` would do. Must not call AWS."""
 
     @abstractmethod
-    def run(self, action: str, finding: Finding) -> dict[str, Any]:
-        """Act, verify, and return {"contained": bool, ...}."""
+    def run(self, action: str, finding: Finding, state: dict[str, Any]) -> dict[str, Any]:
+        """Act, verify, and return {"contained": bool, ...}. `state` is the router state."""
+
+    def verify_with_retry(
+        self, check: Callable[[], dict[str, bool]], attempts: int = 3, delay: float = 1.0
+    ) -> dict[str, bool]:
+        """EC2/IAM reads are eventually consistent: re-check a few times before
+        declaring "not contained" (fail closed, but no spurious FAILED)."""
+        verified = check()
+        for _ in range(attempts - 1):
+            if verified and all(v is True for v in verified.values()):
+                break
+            self.sleep(delay)
+            verified = check()
+        return verified
 
     def record(self, finding: Finding, step: str, **details: Any) -> None:
         self.incidents.append_action(

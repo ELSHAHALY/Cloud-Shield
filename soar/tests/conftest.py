@@ -47,6 +47,7 @@ class World:
     quarantine_sg_id: str
     worker_sg_id: str
     role_arn: str
+    role_id: str
     instance_id: str
     untagged_instance_id: str
     user_name: str
@@ -141,9 +142,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
             GroupName="cs-dev-worker", Description="w", VpcId=vpc
         )["GroupId"]
 
-        role_arn = iam.create_role(RoleName="cs-dev-report-worker", AssumeRolePolicyDocument="{}")[
-            "Role"
-        ]["Arn"]
+        role = iam.create_role(RoleName="cs-dev-report-worker", AssumeRolePolicyDocument="{}")
+        role_arn, role_id = role["Role"]["Arn"], role["Role"]["RoleId"]
         iam.create_instance_profile(InstanceProfileName="cs-dev-report-worker")
         iam.add_role_to_instance_profile(
             InstanceProfileName="cs-dev-report-worker", RoleName="cs-dev-report-worker"
@@ -199,6 +199,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
             quarantine_sg_id=quarantine,
             worker_sg_id=worker_sg,
             role_arn=role_arn,
+            role_id=role_id,
             instance_id=instance,
             untagged_instance_id=untagged_instance,
             user_name="cs-dev-honeytoken",

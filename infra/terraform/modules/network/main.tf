@@ -213,6 +213,10 @@ resource "aws_network_acl" "private_worker" {
 
 resource "aws_network_acl_rule" "private_worker_in" {
   #checkov:skip=CKV_AWS_352:Mirrors the default NACL; filtering is done by the worker SG (no inbound rules). Rules < 100 are reserved for PB-01's quarantine deny
+  #checkov:skip=CKV_AWS_229:Mirrors the default NACL the worker subnets had; the worker SG (no inbound rules) does the filtering. This NACL exists only as PB-01's quarantine switch (ADR-0003)
+  #checkov:skip=CKV_AWS_230:Mirrors the default NACL the worker subnets had; the worker SG (no inbound rules) does the filtering. This NACL exists only as PB-01's quarantine switch (ADR-0003)
+  #checkov:skip=CKV_AWS_231:Mirrors the default NACL the worker subnets had; the worker SG (no inbound rules) does the filtering. This NACL exists only as PB-01's quarantine switch (ADR-0003)
+  #checkov:skip=CKV_AWS_232:Mirrors the default NACL the worker subnets had; the worker SG (no inbound rules) does the filtering. This NACL exists only as PB-01's quarantine switch (ADR-0003)
   network_acl_id = aws_network_acl.private_worker.id
   rule_number    = 100
   egress         = false

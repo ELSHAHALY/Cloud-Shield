@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,7 @@ from core.finding import (
     UnknownTarget,
 )
 from core.incidents import IncidentRepository
+from core.playbook import is_revoke_policy, session_revoke_policy
 from tests import events
 from tests.conftest import INCIDENTS_TABLE
 
@@ -42,7 +44,10 @@ def test_created_at_is_optional() -> None:
 @pytest.mark.parametrize(
     ("event", "target"),
     [
-        (events.exfiltration("i-0123abcd"), Ec2Target("i-0123abcd")),
+        (
+            events.exfiltration("i-0123abcd"),
+            Ec2Target("i-0123abcd", session_role_id="AROAEXAMPLEFAKEROLEID"),
+        ),
         (
             events.leaked_key("bob", "FAKEKEYID00000000001"),
             IamUserTarget("bob", "FAKEKEYID00000000001"),
@@ -127,3 +132,41 @@ def test_evidence_checksum_mismatch_raises() -> None:
 
     with pytest.raises(EvidenceIntegrityError):
         EvidenceCollector("bucket", S3()).put_json("k", {"a": 1})
+
+
+def test_exfiltration_target_carries_the_stolen_role() -> None:
+    target = Finding.from_event(
+        events.exfiltration("i-0123abcd", role_id="AROAFAKEROLEID0001")
+    ).target
+    assert target == Ec2Target("i-0123abcd", session_role_id="AROAFAKEROLEID0001")
+
+
+def test_exfiltration_with_bad_role_id_is_unknown() -> None:
+    event = events.exfiltration("i-0123abcd", role_id="AIDANOTAROLE00000")
+    assert isinstance(Finding.from_event(event).target, UnknownTarget)
+
+
+@pytest.mark.parametrize(
+    ("now", "cutoff"),
+    [
+        (datetime(2026, 10, 14, 10, 0, 7, tzinfo=UTC), "2026-10-14T10:00:07Z"),
+        (datetime(2026, 10, 14, 10, 0, 7, 1, tzinfo=UTC), "2026-10-14T10:00:08Z"),
+        (datetime(2026, 10, 14, 23, 59, 59, 500000, tzinfo=UTC), "2026-10-15T00:00:00Z"),
+    ],
+)
+def test_session_revoke_cutoff_rounds_up_to_whole_seconds(now: datetime, cutoff: str) -> None:
+    document = json.loads(session_revoke_policy(now))
+    assert document["Statement"][0]["Condition"] == {"DateLessThan": {"aws:TokenIssueTime": cutoff}}
+    assert is_revoke_policy(document) is True
+    assert is_revoke_policy(json.dumps(document)) is True
+    assert is_revoke_policy({"Statement": [{"Sid": "Other", "Effect": "Deny"}]}) is False
+
+
+def test_add_evidence_keeps_the_first_hash(world: Any) -> None:
+    repo = IncidentRepository(INCIDENTS_TABLE, boto3.client("dynamodb"))
+    world.seed_incident("f-2")
+    repo.add_evidence("f-2", {"key": "a", "sha256": "first"})
+    repo.add_evidence("f-2", {"key": "b", "sha256": "second"})
+    row = repo.get("f-2")
+    assert row["evidenceSha256"] == "first"
+    assert [r["key"] for r in row["evidenceRecords"]] == ["a", "b"]

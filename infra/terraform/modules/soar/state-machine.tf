@@ -5,9 +5,9 @@
 #                                                   └─ anything else ─► RecordBlocked ─► Notify   (fail closed)
 #        InstanceCredentialExfiltration* / Instance ─► PB01Isolate ─┐
 #        AccessKey (IAM user)                       ─► PB02Revoke  ─┼─► IsDryRun
-#        S3Bucket                                   ─► PB03Restore ─┘
+#        S3Bucket + Policy:S3/Bucket*               ─► PB03Restore ─┘
 #   IsDryRun ─┬─ not explicitly false ─► MarkWouldContain ─► Notify          (fail closed)
-#             └─ false ─► CheckContained ─┬─ contained==true ─► MarkContained ─► (PB01Snapshot) ─► Notify
+#             └─ false ─► CheckContained ─┬─ contained==true ─► MarkContained ─► (PB01Snapshot | PB03Evidence) ─► Notify
 #                                         └─ otherwise ─► RecordFailed ─► Notify
 #        other     ─► NoPlaybook ─► Notify
 #   any failure    ─► RecordFailed ─► Notify
@@ -127,7 +127,16 @@ locals {
           { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Isolate" },
           { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Isolate" },
           { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey", Next = "PB02Revoke" },
-          { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket", Next = "PB03Restore" },
+          # Scenario C: only public-exposure findings. Block Public Access does
+          # not stop Exfiltration:S3/* or Impact:S3/* by an authenticated
+          # principal, so those go to an analyst instead (audit A1).
+          {
+            And = [
+              { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket" },
+              { Variable = "$.detail.type", StringMatches = "Policy:S3/Bucket*" },
+            ]
+            Next = "PB03Restore"
+          },
         ]
         Default = "NoPlaybook"
       }
@@ -235,6 +244,7 @@ locals {
         Choices = [
           { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Snapshot" },
           { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Snapshot" },
+          { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket", Next = "PB03Evidence" },
         ]
         Default = "Notify"
       }
@@ -247,6 +257,27 @@ locals {
         Parameters = {
           FunctionName = local.fn["soar-pb01-ec2-isolate"]
           Payload      = { action = "snapshot", "event.$" = "$" }
+        }
+        ResultSelector = { "result.$" = "$.Payload" }
+        ResultPath     = "$.evidence"
+        Retry          = local.lambda_retry
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          ResultPath  = "$.evidenceError"
+          Next        = "Notify"
+        }]
+        Next = "Notify"
+      }
+
+      # After CONTAINED: store the bucket's pre-restore state (captured by
+      # PB03Restore, carried in $.containment.result.prestate) as hashed
+      # evidence. Outside the MTTC window; a failure doesn't un-contain.
+      PB03Evidence = {
+        Type     = "Task"
+        Resource = "arn:${local.partition}:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = local.fn["soar-pb03-s3-restore-bpa"]
+          Payload      = { action = "evidence", "event.$" = "$" }
         }
         ResultSelector = { "result.$" = "$.Payload" }
         ResultPath     = "$.evidence"

@@ -38,4 +38,16 @@ Three fixes were considered:
   ```
 
   Then restore the instance's SGs from the `sg-swap` action on the incident row (`previousGroups`), and delete the inline policy `cloudshield-soar-revoke-older-sessions` from the worker role.
+- **What the quarantine does NOT block.** AWS doesn't filter some traffic with NACLs or security groups:
+  - the Route 53 Resolver (VPC+2)
+  - instance metadata (IMDS)
+  - Amazon Time Sync
+  - traffic between hosts inside the same subnet (NACLs only)
+
+  So DNS-tunnelled command-and-control survives isolation. PB-01's session revoke denies only credentials issued **before** the revoke. When the instance role's credentials next rotate, IMDS hands out new, valid ones. The instance can't use them itself, because the NACL blocks its egress to AWS APIs. But code running on it could leak them over the DNS channel. Until that channel is closed, treat a quarantined instance's role as still at risk and revoke it again after eradication.
+
+  Follow-up: a Route 53 Resolver DNS Firewall rule group that blocks all domains, attached to the worker VPC as part of quarantine. Detaching the instance profile would also work, but needs `ec2:DisassociateIamInstanceProfile`.
+- **Accepted IAM risks** (audit A6):
+  - `ec2:CreateNetworkAclEntry` has no condition key for the rule action or number, so a compromised PB-01 could plant an allow below rule 10. PB-01 therefore refuses to report CONTAINED while any entry precedes the quarantine deny (`noPreemptingNaclEntries`).
+  - `ec2:ModifyInstanceAttribute` can't be limited per attribute, so it also covers attributes PB-01 never sets. It applies only to instances that carry the scope tag.
 - `terraform apply` doesn't manage the deny entries (they aren't in state), so an apply never silently lifts a quarantine.

@@ -12,14 +12,29 @@ import pytest
 from botocore.exceptions import ClientError
 
 from core.finding import MalformedFindingError
-from core.playbook import PlaybookError
-from playbooks.pb01_ec2_isolate import REVOKE_POLICY_NAME, Pb01Ec2Isolate, lambda_handler
+from core.playbook import REVOKE_POLICY_NAME, PlaybookError
+from playbooks.pb01_ec2_isolate import Pb01Ec2Isolate, lambda_handler
 from tests import events
 from tests.conftest import EVIDENCE_BUCKET, EXECUTION_ARN
 
+ALL_VERIFIED = {
+    "onlyQuarantineGroup": True,
+    "naclIngressDeny": True,
+    "naclEgressDeny": True,
+    "noPreemptingNaclEntries": True,
+    "terminationProtection": True,
+    "stopProtection": True,
+    "roleSessionsRevoked": True,
+}
 
-def pb01(world: Any, clock: Any, clients: Any = None) -> Pb01Ec2Isolate:
-    return Pb01Ec2Isolate(world.settings, clients or boto3.client, clock)
+
+def pb01(world: Any, clock: Any, clients: Any = None, **settings: str) -> Pb01Ec2Isolate:
+    resolved = world.settings.__class__.from_env({**world.env, **settings})
+    return Pb01Ec2Isolate(resolved, clients or boto3.client, clock, sleep=lambda _: None)
+
+
+def exfil(world: Any) -> dict[str, Any]:
+    return events.exfiltration(world.instance_id, role_id=world.role_id)
 
 
 def nacl_entries(world: Any) -> list[dict[str, Any]]:
@@ -33,14 +48,31 @@ def instance(world: Any) -> dict[str, Any]:
     ]["Instances"][0]
 
 
+def overriding(service: str, method: str, fn: Any) -> Any:
+    """Client factory where one method of one service is replaced."""
+
+    def clients(name: str, **kw: Any) -> Any:
+        real = boto3.client(name, **kw)
+        if name != service:
+            return real
+
+        class Proxy:
+            def __getattr__(self, attr: str) -> Any:
+                return fn if attr == method else getattr(real, attr)
+
+        return Proxy()
+
+    return clients
+
+
 class Recorder:
     """Client factory that records every call made through it."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def __call__(self, service: str) -> Any:
-        real = boto3.client(service)
+    def __call__(self, service: str, **kw: Any) -> Any:
+        real = boto3.client(service, **kw)
         recorder = self
 
         class Proxy:
@@ -48,9 +80,9 @@ class Recorder:
                 attr = getattr(real, name)
                 if callable(attr):
 
-                    def wrapped(*a: Any, **kw: Any) -> Any:
+                    def wrapped(*a: Any, **k: Any) -> Any:
                         recorder.calls.append((service, name))
-                        return attr(*a, **kw)
+                        return attr(*a, **k)
 
                     return wrapped
                 return attr
@@ -63,21 +95,15 @@ class Recorder:
 
 
 # ------------------------------------------------------------- isolate: live
-@pytest.mark.parametrize("make_event", [events.portscan, events.exfiltration])
-def test_isolate_contains_and_verifies(world: Any, clock: Any, make_event: Any) -> None:
-    event = make_event(world.instance_id)
+@pytest.mark.parametrize("scenario", ["portscan", "exfiltration"])
+def test_isolate_contains_and_verifies(world: Any, clock: Any, scenario: str) -> None:
+    event = exfil(world) if scenario == "exfiltration" else events.portscan(world.instance_id)
     world.seed_incident(event["detail"]["id"])
 
     result = pb01(world, clock).handle(events.payload("isolate", event))
 
     assert result["contained"] is True
-    assert result["verified"] == {
-        "onlyQuarantineGroup": True,
-        "naclIngressDeny": True,
-        "naclEgressDeny": True,
-        "terminationProtection": True,
-        "stopProtection": True,
-    }
+    assert result["verified"] == ALL_VERIFIED
     assert [g["GroupId"] for g in instance(world)["SecurityGroups"]] == [world.quarantine_sg_id]
     denies = [e for e in nacl_entries(world) if e["RuleNumber"] == 10]
     assert {(e["Egress"], e["RuleAction"], e["CidrBlock"]) for e in denies} == {
@@ -91,8 +117,9 @@ def test_isolate_contains_and_verifies(world: Any, clock: Any, make_event: Any) 
     policy = json.loads(policy) if isinstance(policy, str) else policy
     statement = policy["Statement"][0]
     assert statement["Effect"] == "Deny"
+    # Whole seconds, rounded up (audit A12); NOW has no sub-second part.
     assert statement["Condition"] == {
-        "DateLessThan": {"aws:TokenIssueTime": "2026-10-14T10:00:07.000Z"}
+        "DateLessThan": {"aws:TokenIssueTime": "2026-10-14T10:00:07Z"}
     }
     assert result["revokedRole"] == world.role_arn
 
@@ -117,6 +144,9 @@ def test_isolate_is_idempotent_on_retry(world: Any, clock: Any) -> None:
     again = pb01(world, clock).handle(events.payload("isolate", event))
     assert again["contained"] is True
     assert len([e for e in nacl_entries(world) if e["RuleNumber"] == 10]) == 2
+    # The retry must not overwrite the recovery record with the quarantine SG.
+    swaps = [a for a in world.incident(event["detail"]["id"])["actions"] if a["step"] == "sg-swap"]
+    assert [s["previousGroups"] for s in swaps] == [[world.worker_sg_id]]
 
 
 def test_conflicting_rule_at_quarantine_number_is_not_contained(world: Any, clock: Any) -> None:
@@ -139,6 +169,48 @@ def test_conflicting_rule_at_quarantine_number_is_not_contained(world: Any, cloc
     assert world.incident(event["detail"]["id"])["containmentVerified"] is False
 
 
+def test_preempting_allow_below_quarantine_rule_is_not_contained(world: Any, clock: Any) -> None:
+    boto3.client("ec2").create_network_acl_entry(
+        NetworkAclId=world.worker_nacl_id,
+        RuleNumber=5,
+        Protocol="-1",
+        RuleAction="allow",
+        Egress=True,
+        CidrBlock="0.0.0.0/0",
+    )
+    event = events.portscan(world.instance_id)
+    world.seed_incident(event["detail"]["id"])
+
+    result = pb01(world, clock).handle(events.payload("isolate", event))
+
+    assert result["contained"] is False
+    assert result["verified"]["noPreemptingNaclEntries"] is False
+
+
+def test_verify_polls_for_eventual_consistency(world: Any, clock: Any) -> None:
+    real_ec2 = boto3.client("ec2")
+    reads = {"n": 0}
+
+    def stale_then_fresh(**kw: Any) -> Any:
+        reads["n"] += 1
+        response = real_ec2.describe_instance_attribute(**kw)
+        if reads["n"] <= 2:  # first verify pass sees the old values
+            return {**response, "DisableApiTermination": {"Value": False}}
+        return response
+
+    sleeps: list[float] = []
+    event = events.portscan(world.instance_id)
+    world.seed_incident(event["detail"]["id"])
+    playbook = Pb01Ec2Isolate(
+        world.settings,
+        overriding("ec2", "describe_instance_attribute", stale_then_fresh),
+        clock,
+        sleep=sleeps.append,
+    )
+    assert playbook.handle(events.payload("isolate", event))["contained"] is True
+    assert sleeps == [1.0]
+
+
 # ----------------------------------------------------------- isolate: refusals
 def test_untagged_instance_is_refused(world: Any, clock: Any) -> None:
     event = events.portscan(world.untagged_instance_id)
@@ -146,22 +218,47 @@ def test_untagged_instance_is_refused(world: Any, clock: Any) -> None:
         pb01(world, clock).handle(events.payload("isolate", event))
 
 
-def test_nacl_not_in_allow_list_is_refused(
-    world: Any, clock: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    settings = world.settings.__class__.from_env({**world.env, "QUARANTINE_NACL_IDS": ""})
+def test_nacl_not_in_allow_list_is_refused(world: Any, clock: Any) -> None:
     event = events.portscan(world.instance_id)
     with pytest.raises(PlaybookError, match="not a quarantine NACL"):
-        Pb01Ec2Isolate(settings, boto3.client, clock).handle(events.payload("isolate", event))
+        pb01(world, clock, QUARANTINE_NACL_IDS="").handle(events.payload("isolate", event))
     assert [g["GroupId"] for g in instance(world)["SecurityGroups"]] == [world.worker_sg_id]
 
 
 def test_role_not_revocable_is_refused_before_any_change(world: Any, clock: Any) -> None:
-    settings = world.settings.__class__.from_env({**world.env, "REVOCABLE_ROLE_ARNS": ""})
-    event = events.exfiltration(world.instance_id)
     with pytest.raises(PlaybookError, match="not revocable"):
-        Pb01Ec2Isolate(settings, boto3.client, clock).handle(events.payload("isolate", event))
+        pb01(world, clock, REVOCABLE_ROLE_ARNS="").handle(events.payload("isolate", exfil(world)))
     assert not [e for e in nacl_entries(world) if e["RuleNumber"] == 10]
+
+
+def test_exfiltration_of_a_different_role_is_refused(world: Any, clock: Any) -> None:
+    event = events.exfiltration(world.instance_id, role_id="AROAOTHERFAKEROLEID00")
+    with pytest.raises(PlaybookError, match="not the role in the finding"):
+        pb01(world, clock).handle(events.payload("isolate", event))
+    assert not [e for e in nacl_entries(world) if e["RuleNumber"] == 10]
+
+
+def test_exfiltration_without_instance_role_is_refused(world: Any, clock: Any) -> None:
+    ec2 = boto3.client("ec2")
+    association = ec2.describe_iam_instance_profile_associations(
+        Filters=[{"Name": "instance-id", "Values": [world.instance_id]}]
+    )["IamInstanceProfileAssociations"][0]["AssociationId"]
+    ec2.disassociate_iam_instance_profile(AssociationId=association)
+    with pytest.raises(PlaybookError, match="no instance role"):
+        pb01(world, clock).handle(events.payload("isolate", exfil(world)))
+
+
+def test_revoke_policy_missing_on_readback_is_not_contained(world: Any, clock: Any) -> None:
+    def no_such_policy(**_: Any) -> Any:
+        raise ClientError({"Error": {"Code": "NoSuchEntity"}}, "GetRolePolicy")
+
+    event = exfil(world)
+    world.seed_incident(event["detail"]["id"])
+    result = pb01(world, clock, overriding("iam", "get_role_policy", no_such_policy)).handle(
+        events.payload("isolate", event)
+    )
+    assert result["contained"] is False
+    assert result["verified"]["roleSessionsRevoked"] is False
 
 
 def test_multi_eni_instance_is_refused(world: Any, clock: Any) -> None:
@@ -175,30 +272,19 @@ def test_multi_eni_instance_is_refused(world: Any, clock: Any) -> None:
 
 
 def test_aws_error_propagates_so_router_records_failed(world: Any, clock: Any) -> None:
-    def clients(service: str) -> Any:
-        real = boto3.client(service)
-        if service != "ec2":
-            return real
-
-        class Ec2:
-            def __getattr__(self, name: str) -> Any:
-                return getattr(real, name)
-
-            def modify_instance_attribute(self, **_: Any) -> Any:
-                raise ClientError(
-                    {"Error": {"Code": "UnauthorizedOperation"}}, "ModifyInstanceAttribute"
-                )
-
-        return Ec2()
+    def denied(**_: Any) -> Any:
+        raise ClientError({"Error": {"Code": "UnauthorizedOperation"}}, "ModifyInstanceAttribute")
 
     event = events.portscan(world.instance_id)
     world.seed_incident(event["detail"]["id"])
     with pytest.raises(ClientError):
-        pb01(world, clock, clients).handle(events.payload("isolate", event))
+        pb01(world, clock, overriding("ec2", "modify_instance_attribute", denied)).handle(
+            events.payload("isolate", event)
+        )
 
 
 def test_unresolvable_exfiltration_principal_is_refused(world: Any, clock: Any) -> None:
-    event = events.exfiltration(world.instance_id)
+    event = exfil(world)
     event["detail"]["resource"]["accessKeyDetails"]["principalId"] = "AROAEXAMPLE:attacker"
     with pytest.raises(PlaybookError, match="EC2 instance target"):
         pb01(world, clock).handle(events.payload("isolate", event))
@@ -233,6 +319,8 @@ def test_sample_finding_in_dry_run_plans_only(world: Any, clock: Any) -> None:
     result = pb01(world, clock).handle(events.payload("isolate", event, dry_run=True))
     assert result["would"] == "isolate"
     assert any("i-99999999" in step for step in result["plan"])
+    snapshot_plan = pb01(world, clock).handle(events.payload("snapshot", event, dry_run=True))
+    assert snapshot_plan["would"] == "snapshot"
 
 
 # ---------------------------------------------------------------- payloads
@@ -257,9 +345,14 @@ def test_malformed_finding_raises(world: Any, clock: Any) -> None:
         pb01(world, clock).handle({"action": "isolate", "event": {"detail": {}}})
 
 
+def test_non_instance_target_is_refused(world: Any, clock: Any) -> None:
+    with pytest.raises(PlaybookError, match="EC2 instance target"):
+        pb01(world, clock).handle(events.payload("isolate", events.public_bucket(world.bucket)))
+
+
 # ----------------------------------------------------------------- snapshot
 def test_snapshot_writes_checksummed_manifest(world: Any, clock: Any) -> None:
-    event = events.exfiltration(world.instance_id)
+    event = exfil(world)
     world.seed_incident(event["detail"]["id"])
 
     result = pb01(world, clock).handle(events.payload("snapshot", event))
@@ -288,10 +381,25 @@ def test_snapshot_writes_checksummed_manifest(world: Any, clock: Any) -> None:
     assert row["snapshotIds"] == [snapshot_id]
 
 
+def test_snapshot_retry_reuses_snapshots(world: Any, clock: Any) -> None:
+    event = exfil(world)
+    world.seed_incident(event["detail"]["id"])
+    first = pb01(world, clock).handle(events.payload("snapshot", event))
+    second = pb01(world, clock).handle(events.payload("snapshot", event))
+    assert first["snapshots"][0]["snapshotId"] == second["snapshots"][0]["snapshotId"]
+    snaps = boto3.client("ec2").describe_snapshots(
+        OwnerIds=["self"],
+        Filters=[{"Name": "tag:cloudshield:incident-id", "Values": [event["detail"]["id"]]}],
+    )["Snapshots"]
+    assert len(snaps) == 1
+    row = world.incident(event["detail"]["id"])
+    assert len(row["evidenceRecords"]) == 2
+    assert row["evidenceSha256"] == first["evidence"]["sha256"]  # first hash is kept
+
+
 def test_snapshot_skips_untagged_volumes_and_fails_with_none(world: Any, clock: Any) -> None:
-    ec2 = boto3.client("ec2")
     volume = instance(world)["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]
-    ec2.delete_tags(Resources=[volume], Tags=[{"Key": "cloudshield:soar-scope"}])
+    boto3.client("ec2").delete_tags(Resources=[volume], Tags=[{"Key": "cloudshield:soar-scope"}])
     event = events.portscan(world.instance_id)
     world.seed_incident(event["detail"]["id"])
     with pytest.raises(PlaybookError, match="no in-scope EBS volume"):

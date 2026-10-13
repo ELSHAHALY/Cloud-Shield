@@ -28,7 +28,7 @@ locals {
     }
     "soar-pb03-s3-restore-bpa" = {
       handler = "playbooks.pb03_s3_restore_bpa.lambda_handler"
-      timeout = 20
+      timeout = 30 # pre-state reads + restore + verify retries; evidence is a separate step
       policy  = data.aws_iam_policy_document.pb03.json
     }
   } : {}
@@ -85,16 +85,26 @@ data "aws_iam_policy_document" "safety_guard" {
 data "aws_iam_policy_document" "pb01" {
   statement {
     sid = "Describe"
-    # EC2 Describe* and the ASG membership lookup have no resource-level permissions.
+    # These Describe calls and the ASG membership lookup have no resource-level permissions.
     actions = [
       "ec2:DescribeInstances",
-      "ec2:DescribeInstanceAttribute",
       "ec2:DescribeVolumes",
       "ec2:DescribeSnapshots",
       "ec2:DescribeNetworkAcls",
       "autoscaling:DescribeAutoScalingInstances",
     ]
     resources = ["*"]
+  }
+  # DescribeInstanceAttribute IS resource-level (instance), so it is scoped.
+  statement {
+    sid       = "ReadInScopeInstanceAttributes"
+    actions   = ["ec2:DescribeInstanceAttribute"]
+    resources = ["arn:${local.partition}:ec2:${local.region}:${local.account_id}:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = local.scope_condition_key
+      values   = [local.scope_tag_value]
+    }
   }
   # Instance profile -> role, to find whose sessions to revoke.
   statement {
@@ -105,6 +115,9 @@ data "aws_iam_policy_document" "pb01" {
   # Stateless quarantine (ADR-0003): deny entries on the worker-tier NACL only.
   # CreateNetworkAclEntry can't overwrite an existing rule number (Replace* is
   # not granted), so this can only ADD rules — never loosen the allow at 100.
+  # IAM has no condition key for the rule's action or number, so a compromised
+  # PB-01 could plant an ALLOW below the quarantine rule; the code refuses to
+  # report CONTAINED while any entry precedes the deny (audit A6).
   dynamic "statement" {
     for_each = length(var.quarantine_network_acl_ids) > 0 ? [1] : []
     content {
@@ -113,7 +126,10 @@ data "aws_iam_policy_document" "pb01" {
       resources = local.quarantine_nacl_arns
     }
   }
-  # SG swap: the instance must carry the scope tag…
+  # SG swap + protection: the instance must carry the scope tag. Accepted risk
+  # (audit A6): ModifyInstanceAttribute has no per-attribute condition key, so
+  # this also covers attributes PB-01 never sets (e.g. userData) on in-scope
+  # instances — today only the report-worker.
   statement {
     sid       = "IsolateInScopeInstance"
     actions   = ["ec2:ModifyInstanceAttribute"]
@@ -158,7 +174,16 @@ data "aws_iam_policy_document" "pb01" {
   statement {
     sid       = "WriteEvidence"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.evidence.arn}/*"]
+    resources = ["${aws_s3_bucket.evidence.arn}/incidents/*"]
+  }
+  dynamic "statement" {
+    for_each = length(var.revocable_role_arns) > 0 ? [1] : []
+    content {
+      # Read-back of the revoke policy: verification, not trust.
+      sid       = "VerifyRoleSessionRevoke"
+      actions   = ["iam:GetRolePolicy"]
+      resources = var.revocable_role_arns
+    }
   }
   dynamic "statement" {
     for_each = length(var.revocable_role_arns) > 0 ? [1] : []
@@ -181,8 +206,9 @@ data "aws_iam_policy_document" "pb01" {
 
 data "aws_iam_policy_document" "pb02" {
   statement {
-    sid       = "InspectKeys"
-    actions   = ["iam:ListAccessKeys", "iam:ListUserTags"]
+    sid = "InspectKeys"
+    # ListUserTags: the scope re-check in code; GetUserPolicy: revoke read-back.
+    actions   = ["iam:ListAccessKeys", "iam:ListUserTags", "iam:GetUserPolicy"]
     resources = ["arn:${local.partition}:iam::${local.account_id}:user/*"]
   }
   statement {
@@ -225,13 +251,13 @@ data "aws_iam_policy_document" "pb03" {
       "s3:GetBucketAcl",
     ]
     # S3 bucket-level actions don't reliably support aws:ResourceTag, so the
-    # name prefix is the IAM boundary and the guard checks the tag in code.
+    # name prefix is the IAM boundary; the guard AND PB-03 check the tag in code.
     resources = ["arn:${local.partition}:s3:::${var.name}-*"]
   }
   statement {
     sid       = "WriteEvidence"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.evidence.arn}/*"]
+    resources = ["${aws_s3_bucket.evidence.arn}/incidents/*"]
   }
 }
 
