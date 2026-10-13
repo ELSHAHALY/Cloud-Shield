@@ -8,6 +8,23 @@ variable "quarantine_security_group_id" {
   type        = string
 }
 
+variable "quarantine_network_acl_ids" {
+  description = "modules/network output — the only NACLs PB-01 may add quarantine deny entries to (cuts established connections the SG swap leaves alive). Empty = PB-01 cannot isolate and fails closed."
+  type        = list(string)
+  default     = []
+}
+
+variable "quarantine_nacl_rule_number" {
+  description = "Rule number PB-01 uses for its deny-all ingress + egress entries. Must be below the worker NACL's allow rules (100)."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.quarantine_nacl_rule_number >= 1 && var.quarantine_nacl_rule_number < 100
+    error_message = "Must be 1-99 so the deny is evaluated before the allow at 100."
+  }
+}
+
 variable "notification_emails" {
   description = "Analyst emails subscribed to the incident topic. Each must confirm the AWS subscription email. Empty = no subscriptions (topic still created)."
   type        = list(string)

@@ -91,6 +91,7 @@ jobs:
           semgrep scan \
             --config p/owasp-top-ten \
             --config p/nodejs \
+            --config p/python \
             --severity ERROR \
             --error \
             --metrics off \
@@ -131,6 +132,42 @@ jobs:
         run: |
           echo "::warning title=SCA gate::Fixable CRITICAL dependency CVEs. Not blocking only because ENFORCE_GATES != true."
           echo "### ⚠️ SCA gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # SOAR code (soar/) — lint + unit tests (moto, no AWS credentials). Like
+  # terraform fmt/validate this is a correctness check, so it always
+  # hard-fails, even in fail-open mode: a broken safety guard must never merge.
+  # ---------------------------------------------------------------------------
+  soar:
+    name: "gate: soar (ruff + pytest)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: soar
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13" # = Lambda runtime in modules/soar/playbooks.tf
+
+      - name: Install test toolchain
+        run: python -m pip install --quiet -r requirements-dev.txt
+
+      - name: ruff
+        run: |
+          ruff check . ../scripts/package_soar.py
+          ruff format --check . ../scripts/package_soar.py
+
+      - name: pytest (coverage >= 90%)
+        run: python -m pytest --cov
+
+      - name: Deterministic package builds
+        working-directory: .
+        run: python scripts/package_soar.py --out build/soar-playbooks.zip
 
   # ---------------------------------------------------------------------------
   # Gate 4 — IaC (terraform fmt/validate + Checkov).

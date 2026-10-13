@@ -86,6 +86,7 @@ module "soar" {
 
   name                         = local.name
   quarantine_security_group_id = module.network.quarantine_security_group_id
+  quarantine_network_acl_ids   = [module.network.private_worker_network_acl_id]
   notification_emails          = var.soar_notification_emails
   dry_run                      = var.soar_dry_run
   min_severity                 = var.soar_min_severity

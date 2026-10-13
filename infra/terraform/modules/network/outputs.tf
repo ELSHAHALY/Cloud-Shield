@@ -50,6 +50,11 @@ output "quarantine_security_group_id" {
   value       = aws_security_group.quarantine.id
 }
 
+output "private_worker_network_acl_id" {
+  description = "Consumed by modules/soar: the only NACL PB-01 may add quarantine deny entries to."
+  value       = aws_network_acl.private_worker.id
+}
+
 output "app_port" {
   value = var.app_port
 }

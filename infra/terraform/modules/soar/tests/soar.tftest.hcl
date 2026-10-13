@@ -2,7 +2,86 @@
 #   terraform -chdir=infra/terraform/modules/soar init -backend=false
 #   terraform -chdir=infra/terraform/modules/soar test
 
-mock_provider "aws" {}
+mock_provider "aws" {
+  # The mock fills computed attributes with random strings, which the provider
+  # then rejects wherever it validates JSON policies or ARNs. Pin realistic
+  # values for every data source the module reads and every ARN it references.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+  mock_data "aws_region" {
+    defaults = {
+      region = "us-east-1"
+    }
+  }
+  mock_data "aws_partition" {
+    defaults = {
+      partition = "aws"
+    }
+  }
+  mock_resource "aws_cloudwatch_event_rule" {
+    defaults = {
+      arn = "arn:aws:events:us-east-1:123456789012:rule/mock"
+    }
+  }
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = {
+      arn = "arn:aws:logs:us-east-1:123456789012:log-group:mock"
+    }
+  }
+  mock_resource "aws_dynamodb_table" {
+    defaults = {
+      arn = "arn:aws:dynamodb:us-east-1:123456789012:table/mock"
+    }
+  }
+  mock_resource "aws_iam_policy" {
+    defaults = {
+      arn = "arn:aws:iam::123456789012:policy/mock"
+    }
+  }
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::123456789012:role/mock"
+    }
+  }
+  mock_resource "aws_kms_key" {
+    defaults = {
+      arn = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+    }
+  }
+  mock_resource "aws_lambda_function" {
+    defaults = {
+      arn = "arn:aws:lambda:us-east-1:123456789012:function:mock"
+    }
+  }
+  mock_resource "aws_s3_bucket" {
+    defaults = {
+      arn = "arn:aws:s3:::mock"
+    }
+  }
+  mock_resource "aws_sfn_state_machine" {
+    defaults = {
+      arn = "arn:aws:states:us-east-1:123456789012:stateMachine:mock"
+    }
+  }
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:us-east-1:123456789012:mock"
+    }
+  }
+  mock_resource "aws_ssm_parameter" {
+    defaults = {
+      arn = "arn:aws:ssm:us-east-1:123456789012:parameter/mock"
+    }
+  }
+}
 
 variables {
   name                         = "cs-test"
@@ -111,4 +190,35 @@ run "rejects_out_of_range_severity" {
   }
 
   expect_failures = [var.min_severity]
+}
+
+run "pb01_nacl_quarantine_is_scoped" {
+  command = plan
+
+  variables {
+    playbook_package = {
+      s3_bucket = "artifacts-bucket"
+      s3_key    = "soar/playbooks.zip"
+    }
+    quarantine_network_acl_ids = ["acl-0bbbbbbbbbbbbbbbb"]
+  }
+
+  assert {
+    condition     = local.quarantine_nacl_arns == ["arn:aws:ec2:us-east-1:123456789012:network-acl/acl-0bbbbbbbbbbbbbbbb"]
+    error_message = "PB-01 may add NACL entries only to the worker-tier NACL it is given."
+  }
+  assert {
+    condition     = aws_lambda_function.playbook["soar-pb01-ec2-isolate"].environment[0].variables.QUARANTINE_NACL_IDS == "acl-0bbbbbbbbbbbbbbbb"
+    error_message = "PB-01 must receive the NACL allow-list it is permitted to touch."
+  }
+}
+
+run "rejects_nacl_rule_at_or_above_allow" {
+  command = plan
+
+  variables {
+    quarantine_nacl_rule_number = 100
+  }
+
+  expect_failures = [var.quarantine_nacl_rule_number]
 }
