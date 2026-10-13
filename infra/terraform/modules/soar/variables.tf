@@ -125,6 +125,12 @@ variable "log_retention_days" {
   default = 30
 }
 
+variable "extra_notify_rule_names" {
+  description = "Names of other EventBridge rules in this account allowed to publish to the incidents topic (notify only, never the router)."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

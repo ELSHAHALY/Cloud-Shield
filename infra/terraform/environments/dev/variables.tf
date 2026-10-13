@@ -74,6 +74,54 @@ variable "soar_min_severity" {
   default = 7
 }
 
+variable "manage_guardduty_detector" {
+  description = "Create the GuardDuty detector (one per region). false if it already exists and you won't import it."
+  type        = bool
+  default     = true
+}
+
+variable "guardduty_s3_protection" {
+  type    = bool
+  default = false
+}
+
+variable "guardduty_runtime_monitoring" {
+  type    = bool
+  default = false
+}
+
+variable "guardduty_malware_protection" {
+  type    = bool
+  default = false
+}
+
+variable "enable_security_hub" {
+  type    = bool
+  default = false
+}
+
+variable "securityhub_cis" {
+  type    = bool
+  default = false
+}
+
+variable "securityhub_pci_dss" {
+  type    = bool
+  default = false
+}
+
+variable "enable_config" {
+  description = "Config recorder (S3 buckets only) + S3 public-access rules. One recorder per region: import an existing one."
+  type        = bool
+  default     = true
+}
+
+variable "enable_lab_targets" {
+  description = "LAB ONLY: honeytoken user + exposure bucket for the scenario B/C simulations."
+  type        = bool
+  default     = false
+}
+
 variable "soar_playbook_package" {
   description = "S3 location of the built soar/ Lambda zip. null = playbooks and cs-ir-router disabled."
   type = object({

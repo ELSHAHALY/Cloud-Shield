@@ -37,6 +37,24 @@ variable "expiration_days" {
   }
 }
 
+variable "cloudtrail_trail_name" {
+  description = "Name of the CloudTrail trail allowed to deliver here (modules/detection). Empty = no CloudTrail statements."
+  type        = string
+  default     = ""
+}
+
+variable "enable_config_delivery" {
+  description = "Allow AWS Config to deliver under config/."
+  type        = bool
+  default     = false
+}
+
+variable "enable_guardduty_export" {
+  description = "Allow this account's GuardDuty detector to export findings under guardduty/."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Extra tags (provider default_tags already apply Project/Environment/ManagedBy)."
   type        = map(string)

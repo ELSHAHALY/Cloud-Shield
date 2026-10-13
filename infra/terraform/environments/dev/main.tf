@@ -18,6 +18,10 @@ locals {
   # explicitly to lab targets only — never put it in provider default_tags,
   # or every resource becomes in scope and the safety guard is meaningless.
   soar_scope_tag = { "cloudshield:soar-scope" = "in-scope" }
+
+  # Shared by log-archive (bucket policy scoped to this trail ARN) and
+  # detection (creates it): a name, not a reference, so there is no cycle.
+  trail_name = "${local.name}-trail"
 }
 
 data "aws_availability_zones" "available" {
@@ -79,6 +83,10 @@ module "log_archive" {
   name                       = local.name
   force_destroy              = var.log_archive_force_destroy
   object_lock_retention_days = var.log_archive_object_lock_days
+
+  cloudtrail_trail_name   = local.trail_name
+  enable_config_delivery  = var.enable_config
+  enable_guardduty_export = var.manage_guardduty_detector
 }
 
 module "soar" {
@@ -96,7 +104,47 @@ module "soar" {
   # Known at plan time (a bool), so the IAM document shape never depends on
   # an unknown ARN.
   revocable_role_arns = var.enable_report_worker ? [module.compute.report_worker_role_arn] : []
+
+  # Config NON_COMPLIANT notifications from module.detection (by name: no cycle).
+  extra_notify_rule_names = var.enable_config ? ["${local.name}-soar-config-noncompliant"] : []
 }
 
-# TODO(S3): module "detection" — GuardDuty detector, Security Hub, Config rules,
-#           CloudTrail (+S3 data events), Glue tables, Athena workgroup w/ scan cap
+module "detection" {
+  source = "../../modules/detection"
+
+  name                    = local.name
+  log_archive_bucket_name = module.log_archive.bucket_name
+  log_archive_bucket_arn  = module.log_archive.bucket_arn
+  log_archive_kms_key_arn = module.log_archive.kms_key_arn
+
+  cloudtrail_trail_name = local.trail_name
+  # Object-level audit of the sensitive buckets (gap 16) + the lab bucket.
+  data_event_bucket_arns = concat(
+    [module.soar.evidence_bucket_arn, module.data.documents_bucket_arn],
+    var.enable_lab_targets ? [module.lab_targets[0].lab_bucket_arn] : [],
+  )
+  cloudtrail_regions = distinct([var.aws_region, "us-east-1"])
+
+  manage_guardduty_detector    = var.manage_guardduty_detector
+  guardduty_s3_protection      = var.guardduty_s3_protection
+  guardduty_runtime_monitoring = var.guardduty_runtime_monitoring
+  guardduty_malware_protection = var.guardduty_malware_protection
+
+  enable_security_hub = var.enable_security_hub
+  securityhub_cis     = var.securityhub_cis
+  securityhub_pci_dss = var.securityhub_pci_dss
+
+  enable_config              = var.enable_config
+  notify_config_noncompliant = var.enable_config
+  notify_sns_topic_arn       = module.soar.sns_topic_arn
+}
+
+# Scenario B/C targets (plan §7). Off unless a simulation is being run.
+module "lab_targets" {
+  count  = var.enable_lab_targets ? 1 : 0
+  source = "../../modules/lab-targets"
+
+  name                     = local.name
+  soar_scope_tag           = local.soar_scope_tag
+  soar_target_boundary_arn = module.soar.target_permissions_boundary_arn
+}
