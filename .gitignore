@@ -12,6 +12,8 @@ crash.*.log
 backend.hcl
 !backend.hcl.example
 .terraform.tfstate.lock.info
+# Child modules never pin providers; only root configs may commit a lock file.
+infra/terraform/modules/**/.terraform.lock.hcl
 override.tf
 override.tf.json
 *_override.tf
@@ -42,6 +44,8 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.coverage
+.coverage.*
 *.zip
 soar/**/build/
 

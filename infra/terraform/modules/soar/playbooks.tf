@@ -34,18 +34,25 @@ locals {
   } : {}
 
   lambda_env = {
-    DRY_RUN_PARAM       = aws_ssm_parameter.dry_run.name
-    SCOPE_TAG_PARAM     = aws_ssm_parameter.scope_tag.name
-    SCOPE_TAG_KEY       = local.scope_tag_key
-    SCOPE_TAG_VALUE     = local.scope_tag_value
-    INCIDENTS_TABLE     = aws_dynamodb_table.incidents.name
-    EVIDENCE_BUCKET     = aws_s3_bucket.evidence.bucket
-    QUARANTINE_SG_ID    = var.quarantine_security_group_id
-    REVOCABLE_ROLE_ARNS = join(",", var.revocable_role_arns)
-    BUCKET_NAME_PREFIX  = "${var.name}-"
+    DRY_RUN_PARAM        = aws_ssm_parameter.dry_run.name
+    SCOPE_TAG_PARAM      = aws_ssm_parameter.scope_tag.name
+    SCOPE_TAG_KEY        = local.scope_tag_key
+    SCOPE_TAG_VALUE      = local.scope_tag_value
+    INCIDENTS_TABLE      = aws_dynamodb_table.incidents.name
+    EVIDENCE_BUCKET      = aws_s3_bucket.evidence.bucket
+    QUARANTINE_SG_ID     = var.quarantine_security_group_id
+    QUARANTINE_NACL_IDS  = join(",", var.quarantine_network_acl_ids)
+    QUARANTINE_NACL_RULE = tostring(var.quarantine_nacl_rule_number)
+    REVOCABLE_ROLE_ARNS  = join(",", var.revocable_role_arns)
+    BUCKET_NAME_PREFIX   = "${var.name}-"
   }
 
   scope_condition_key = "aws:ResourceTag/${local.scope_tag_key}"
+
+  quarantine_nacl_arns = [
+    for id in var.quarantine_network_acl_ids :
+    "arn:${local.partition}:ec2:${local.region}:${local.account_id}:network-acl/${id}"
+  ]
 }
 
 # -----------------------------------------------------------------------------
@@ -77,9 +84,34 @@ data "aws_iam_policy_document" "safety_guard" {
 
 data "aws_iam_policy_document" "pb01" {
   statement {
-    sid       = "Describe"
-    actions   = ["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
+    sid = "Describe"
+    # EC2 Describe* and the ASG membership lookup have no resource-level permissions.
+    actions = [
+      "ec2:DescribeInstances",
+      "ec2:DescribeInstanceAttribute",
+      "ec2:DescribeVolumes",
+      "ec2:DescribeSnapshots",
+      "ec2:DescribeNetworkAcls",
+      "autoscaling:DescribeAutoScalingInstances",
+    ]
     resources = ["*"]
+  }
+  # Instance profile -> role, to find whose sessions to revoke.
+  statement {
+    sid       = "ResolveInstanceRole"
+    actions   = ["iam:GetInstanceProfile"]
+    resources = ["arn:${local.partition}:iam::${local.account_id}:instance-profile/${var.name}-*"]
+  }
+  # Stateless quarantine (ADR-0003): deny entries on the worker-tier NACL only.
+  # CreateNetworkAclEntry can't overwrite an existing rule number (Replace* is
+  # not granted), so this can only ADD rules — never loosen the allow at 100.
+  dynamic "statement" {
+    for_each = length(var.quarantine_network_acl_ids) > 0 ? [1] : []
+    content {
+      sid       = "QuarantineNaclEntriesOnly"
+      actions   = ["ec2:CreateNetworkAclEntry"]
+      resources = local.quarantine_nacl_arns
+    }
   }
   # SG swap: the instance must carry the scope tag…
   statement {
@@ -187,10 +219,19 @@ data "aws_iam_policy_document" "pb03" {
       "s3:GetBucketPublicAccessBlock",
       "s3:PutBucketPublicAccessBlock",
       "s3:GetBucketTagging",
+      # Pre-restore evidence: the exposure as it was, before BPA overrides it.
+      "s3:GetBucketPolicy",
+      "s3:GetBucketPolicyStatus",
+      "s3:GetBucketAcl",
     ]
     # S3 bucket-level actions don't reliably support aws:ResourceTag, so the
     # name prefix is the IAM boundary and the guard checks the tag in code.
     resources = ["arn:${local.partition}:s3:::${var.name}-*"]
+  }
+  statement {
+    sid       = "WriteEvidence"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.evidence.arn}/*"]
   }
 }
 

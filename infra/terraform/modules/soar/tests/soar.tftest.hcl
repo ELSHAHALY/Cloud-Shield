@@ -191,3 +191,34 @@ run "rejects_out_of_range_severity" {
 
   expect_failures = [var.min_severity]
 }
+
+run "pb01_nacl_quarantine_is_scoped" {
+  command = plan
+
+  variables {
+    playbook_package = {
+      s3_bucket = "artifacts-bucket"
+      s3_key    = "soar/playbooks.zip"
+    }
+    quarantine_network_acl_ids = ["acl-0bbbbbbbbbbbbbbbb"]
+  }
+
+  assert {
+    condition     = local.quarantine_nacl_arns == ["arn:aws:ec2:us-east-1:123456789012:network-acl/acl-0bbbbbbbbbbbbbbbb"]
+    error_message = "PB-01 may add NACL entries only to the worker-tier NACL it is given."
+  }
+  assert {
+    condition     = aws_lambda_function.playbook["soar-pb01-ec2-isolate"].environment[0].variables.QUARANTINE_NACL_IDS == "acl-0bbbbbbbbbbbbbbbb"
+    error_message = "PB-01 must receive the NACL allow-list it is permitted to touch."
+  }
+}
+
+run "rejects_nacl_rule_at_or_above_allow" {
+  command = plan
+
+  variables {
+    quarantine_nacl_rule_number = 100
+  }
+
+  expect_failures = [var.quarantine_nacl_rule_number]
+}

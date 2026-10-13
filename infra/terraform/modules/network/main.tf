@@ -197,6 +197,40 @@ resource "aws_network_acl_rule" "forensics_out_self" {
 }
 
 # -----------------------------------------------------------------------------
+# Worker-tier NACL — PB-01's quarantine switch (ADR-0003, handoff gap 10).
+# Security groups are stateful: swapping onto the quarantine SG leaves already
+# tracked connections alive. NACLs are stateless, so PB-01 inserts deny-all
+# entries (rule numbers below 100) here to cut them. Until then the allow-all
+# rules below behave exactly like the default NACL the subnets had before.
+# Blast radius of the deny: the whole worker tier — only the report-worker
+# lives there; app subnets keep the default NACL.
+# -----------------------------------------------------------------------------
+resource "aws_network_acl" "private_worker" {
+  vpc_id     = aws_vpc.this.id
+  subnet_ids = aws_subnet.private_worker[*].id
+  tags       = merge(var.tags, { Name = "${var.name}-nacl-private-worker", Purpose = "soar-isolation" })
+}
+
+resource "aws_network_acl_rule" "private_worker_in" {
+  #checkov:skip=CKV_AWS_352:Mirrors the default NACL; filtering is done by the worker SG (no inbound rules). Rules < 100 are reserved for PB-01's quarantine deny
+  network_acl_id = aws_network_acl.private_worker.id
+  rule_number    = 100
+  egress         = false
+  protocol       = "-1"
+  rule_action    = "allow"
+  cidr_block     = "0.0.0.0/0"
+}
+
+resource "aws_network_acl_rule" "private_worker_out" {
+  network_acl_id = aws_network_acl.private_worker.id
+  rule_number    = 100
+  egress         = true
+  protocol       = "-1"
+  rule_action    = "allow"
+  cidr_block     = "0.0.0.0/0"
+}
+
+# -----------------------------------------------------------------------------
 # Gateway endpoints (free): S3 + DynamoDB traffic stays off the internet and
 # off the NAT bill. Attached to the private table only, never forensics.
 # -----------------------------------------------------------------------------

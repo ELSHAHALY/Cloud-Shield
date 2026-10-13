@@ -6,11 +6,18 @@ The automated containment engine (plan §6.2–6.5, class model §8.6). The infr
 
 ```
 soar/
+  core/                             shared object model (plan §8.6)
+    finding.py                      Finding: parsed GuardDuty event + resolved target, both MTTC times
+    guard.py                        SafetyGuard: rules 1-5 below, fail closed
+    playbook.py                     abstract Playbook: dry-run gate, verify-before-contained, action log
+    incidents.py                    IncidentRepository: action log + evidence fields (never `status`)
+    evidence.py                     EvidenceCollector: canonical JSON, SHA-256 checked by S3
+    config.py, aws.py               env settings; boto3 clients with short timeouts
   safety_guard/handler.py           lambda_handler(event, ctx) -> {"allowed": bool, "dry_run": bool, "reason": str}
   playbooks/pb01_ec2_isolate.py     lambda_handler(event, ctx), event = {"action": "isolate"|"snapshot", "event": <router state>}
   playbooks/pb02_iam_key_revoke.py  event = {"action": "revoke",  "event": ...}
   playbooks/pb03_s3_restore_bpa.py  event = {"action": "restore", "event": ...}
-  tests/                            pytest; moto for AWS calls
+  tests/                            pytest + moto (no AWS credentials); test_contract.py fails if this drifts from playbooks.tf
 ```
 
 The router state contains the original EventBridge event (`detail`, `time`, …) and `guard.decision`.
@@ -25,7 +32,7 @@ The router state contains the original EventBridge event (`detail`, `time`, …)
 
 ## Environment variables every function receives
 
-`DRY_RUN_PARAM`, `SCOPE_TAG_PARAM`, `SCOPE_TAG_KEY`, `SCOPE_TAG_VALUE`, `INCIDENTS_TABLE`, `EVIDENCE_BUCKET`, `QUARANTINE_SG_ID`, `REVOCABLE_ROLE_ARNS`, `BUCKET_NAME_PREFIX`.
+`DRY_RUN_PARAM`, `SCOPE_TAG_PARAM`, `SCOPE_TAG_KEY`, `SCOPE_TAG_VALUE`, `INCIDENTS_TABLE`, `EVIDENCE_BUCKET`, `QUARANTINE_SG_ID`, `QUARANTINE_NACL_IDS`, `QUARANTINE_NACL_RULE`, `REVOCABLE_ROLE_ARNS`, `BUCKET_NAME_PREFIX`.
 
 ## Safety guard rules (write these tests first; they are the R2 control)
 
@@ -52,12 +59,33 @@ IAM enforces rule 3 independently: every mutating permission is conditioned on t
   - Revoke the instance role's sessions: an inline deny on `aws:TokenIssueTime` earlier than now, on roles in `REVOCABLE_ROLE_ARNS`. IAM allows this only on roles carrying the SOAR target permissions boundary.
   - Then verify, and return `contained: true`. Keep it well under 60 s.
   - The same function handles `InstanceCredentialExfiltration*` findings, which arrive with `resourceType = AccessKey`. Get the instance id from `accessKeyDetails.principalId`.
-- The security-group swap **does not cut established connections**, because security groups are stateful. The fix (an SSM process stop, or a deny NACL) needs **extra IAM** that the module does not grant yet: `ssm:SendCommand` on the in-scope instance, or `ec2:ReplaceNetworkAclAssociation`. Add it to `modules/soar/playbooks.tf` (pb01) together with the code, and record which option you chose.
+- **Established connections (gap 10): decided in ADR-0003.** Security groups are stateful, so the swap alone leaves tracked connections open. Before the swap, PB-01 adds deny-all entries (rule `QUARANTINE_NACL_RULE`, default 10) to the dedicated worker-tier NACL. It may only add entries, and only to NACLs in `QUARANTINE_NACL_IDS`. It also sets termination and stop protection. `contained: true` requires every one of these to read back correctly. Recovery is manual: see ADR-0003.
+- Single-ENI instances only (a multi-ENI swap would need more IAM). ASG membership is recorded for the analyst, not changed.
 - `snapshot` runs **after** CONTAINED:
   - Snapshot each in-scope volume. Tags are written at creation.
   - Write a manifest to `EVIDENCE_BUCKET` with the snapshot IDs, actor (the execution ARN) and UTC times. Upload it with `ChecksumAlgorithm=SHA256`.
   - Store the returned SHA-256 **on the incident row** (`UpdateItem`). A file cannot contain its own hash.
   - The manifest plus the hash on the row form the chain-of-custody record.
+
+## Develop
+
+```bash
+cd soar
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check .
+pytest --cov                                       # fails under 90 % coverage
+cd .. && make package-soar                          # build/soar-playbooks.zip + its SHA-256
+```
+
+CI runs the same checks as `gate: soar (ruff + pytest)`.
+
+To go live:
+
+1. Upload the zip to a versioned S3 bucket.
+2. Set `soar_playbook_package = { s3_bucket, s3_key, s3_object_version }`, keeping `soar_dry_run = true`.
+3. Replay GuardDuty sample findings. They must end as `WOULD_CONTAIN_DRY_RUN`.
+4. Only then flip `soar_dry_run = false`.
 
 ## Non-negotiables
 

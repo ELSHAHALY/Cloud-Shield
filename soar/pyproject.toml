@@ -1,0 +1,33 @@
+# SOAR Lambda package (S3 · @ahklsfg). Runtime: python3.13 (modules/soar/playbooks.tf).
+# boto3 is provided by the Lambda runtime and is NOT vendored into the zip.
+
+[project]
+name = "cloudshield-soar"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "BLE", "PT", "RET", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers -p no:cacheprovider"
+filterwarnings = ["error", "ignore::DeprecationWarning:botocore.*", "ignore::DeprecationWarning:moto.*"]
+
+[tool.coverage.run]
+branch = true
+source = ["core", "safety_guard", "playbooks"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
