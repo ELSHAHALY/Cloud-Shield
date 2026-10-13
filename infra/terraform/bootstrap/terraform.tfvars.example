@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (git-ignored) and edit.
+project_name        = "cloudshield"
+aws_region          = "us-east-1"
+github_repository   = "ELSHAHALY/Cloud-Shield"
+monthly_budget_usd  = 100
+budget_alert_emails = ["team-member-1@example.com", "team-member-2@example.com", "team-member-3@example.com"]

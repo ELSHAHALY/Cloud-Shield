@@ -1,0 +1,8 @@
+# ZAP baseline rule overrides — <rule-id><TAB><IGNORE|INFO|WARN|FAIL><TAB><comment>
+# Run with -I, so ONLY rules listed as FAIL break the build. Passive scan only:
+# it will NOT find SQLi — Semgrep (SAST) is the gate for seeded SQLi (KPI §2.4).
+10020	FAIL	(Missing anti-clickjacking header)
+10021	FAIL	(X-Content-Type-Options header missing)
+10035	FAIL	(Strict-Transport-Security header not set)
+10038	FAIL	(Content-Security-Policy header not set)
+# 10202 (anti-CSRF tokens) deliberately NOT FAIL: the API uses bearer JWTs, not cookies, so CSRF tokens do not apply.

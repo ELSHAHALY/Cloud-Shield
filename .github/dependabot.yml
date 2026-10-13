@@ -1,0 +1,25 @@
+# Keeps SHA-pinned actions and Terraform providers current, so pinning does
+# not turn into "pinned to something vulnerable forever".
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directories:
+      - /infra/terraform/bootstrap
+      - /infra/terraform/environments/dev
+      - /infra/terraform/modules/*
+    schedule:
+      interval: weekly
+
+  # TODO(S2): enable once app/docs-api/package.json exists
+  # - package-ecosystem: npm
+  #   directory: /app/docs-api
+  #   schedule:
+  #     interval: weekly

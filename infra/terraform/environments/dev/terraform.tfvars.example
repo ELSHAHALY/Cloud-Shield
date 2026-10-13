@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (git-ignored). Every value has a safe default;
+# override only what you need.
+project_name = "cloudshield"
+environment  = "dev"
+aws_region   = "us-east-1"
+
+# ---- S1 ----
+enable_interface_endpoints = false
+container_image            = null # e.g. "<acct>.dkr.ecr.us-east-1.amazonaws.com/cloudshield-dev/docs-api@sha256:<64 hex>"
+enable_report_worker       = false
+allow_worker_lab_scan      = false
+
+# ---- S3 ----
+log_archive_force_destroy    = true
+log_archive_object_lock_days = 0
+soar_notification_emails     = ["analyst@example.com"]
+soar_dry_run                 = true
+soar_min_severity            = 7
+soar_playbook_package        = null # { s3_bucket = "...", s3_key = "soar/playbooks-<sha>.zip" }

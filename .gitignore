@@ -1,0 +1,60 @@
+# ---- Terraform ----
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+backend.hcl
+!backend.hcl.example
+.terraform.tfstate.lock.info
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ---- Secrets / credentials (never commit; Gitleaks is the backstop) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+.aws/
+honeytoken*.json
+evidence/
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+coverage/
+dist/
+build/
+
+# ---- Python (SOAR Lambdas) ----
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.zip
+soar/**/build/
+
+# ---- Scanner output ----
+.checkov.baseline
+sbom/
+zap/
+*.sarif
+results.json
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

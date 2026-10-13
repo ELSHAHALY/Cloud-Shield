@@ -1,0 +1,50 @@
+# CloudShield code ownership — RACI plan §2.2, module map ADR-0002.
+#
+#   S1 Platform / Infra / CI-CD        @ELSHAHALY
+#   S2 App / Identity / Data           @YasseenAbdelghany
+#   S3 SecOps / SOAR / Forensics       @ahklsfg
+#
+# Rules: the LAST matching pattern wins. Every owner listed must have Write
+# access to the repo, or GitHub flags the line as an error and ignores it.
+# Enable "Require review from Code Owners" in branch protection for main.
+#
+# IMPORTANT: when a line lists several owners, GitHub needs approval from ANY
+# ONE of them, not all. Lines below with two or three owners mean "any of these
+# domains may approve". Real two-person review is enforced by branch protection
+# ("Required approvals: 2"), not by this file.
+
+# Default: anything unmapped needs the platform owner.
+*                                           @ELSHAHALY
+
+# ---------------- S1 — Platform / Infra / CI-CD ----------------
+/infra/                                     @ELSHAHALY
+/infra/terraform/bootstrap/                 @ELSHAHALY
+/infra/terraform/modules/network/           @ELSHAHALY
+/infra/terraform/modules/compute/           @ELSHAHALY
+/Makefile                                   @ELSHAHALY
+/.pre-commit-config.yaml                    @ELSHAHALY
+/.zap/                                      @ELSHAHALY @YasseenAbdelghany
+
+# ---------------- S2 — App / Identity / Data ----------------
+/app/                                       @YasseenAbdelghany
+/infra/terraform/modules/data/              @YasseenAbdelghany
+
+# ---------------- S3 — SecOps / SOAR / Forensics ----------------
+/soar/                                      @ahklsfg
+/detection/                                 @ahklsfg
+/attack-sim/                                @ahklsfg
+/infra/terraform/modules/soar/              @ahklsfg
+/infra/terraform/modules/log-archive/       @ahklsfg
+
+# ---------------- Shared, security-critical: either domain may approve ----------------
+# The environment composition touches every domain.
+/infra/terraform/environments/              @ELSHAHALY @ahklsfg
+# The report-worker is S1's code but S3's forensic target.
+/infra/terraform/modules/compute/worker.tf  @ELSHAHALY @ahklsfg
+# The quarantine SG is what PB-01 isolates onto.
+/infra/terraform/modules/network/security-groups.tf  @ELSHAHALY @ahklsfg
+# The pipeline IS a security control: platform or SecOps must approve.
+/.github/                                   @ELSHAHALY @ahklsfg
+# Ownership rules themselves: any of the three (pair with required approvals = 2).
+/.github/CODEOWNERS                         @ELSHAHALY @YasseenAbdelghany @ahklsfg
+/docs/adr/                                  @ELSHAHALY @YasseenAbdelghany @ahklsfg

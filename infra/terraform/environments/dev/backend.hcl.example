@@ -1,0 +1,8 @@
+# Copy to backend.hcl (git-ignored), fill from `terraform output` in bootstrap/,
+# then:  terraform init -backend-config=backend.hcl
+bucket       = "cloudshield-tfstate-<ACCOUNT_ID>-us-east-1"
+key          = "dev/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+kms_key_id   = "arn:aws:kms:us-east-1:<ACCOUNT_ID>:key/<KEY_ID>"
+use_lockfile = true # S3-native locking (Terraform >= 1.10); no DynamoDB table

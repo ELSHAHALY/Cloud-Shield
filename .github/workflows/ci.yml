@@ -1,0 +1,364 @@
+# CloudShield — DevSecOps security gates (plan §5, Figure 5.1)
+#
+# Order is cheapest/fastest first: secrets -> SAST -> SCA -> IaC -> image -> DAST.
+#
+# FAIL-OPEN vs ENFORCED
+#   Repository variable ENFORCE_GATES (Settings -> Secrets and variables ->
+#   Actions -> Variables):
+#     unset / anything else  -> gates run, findings raise a warning + summary,
+#                               the job stays green (bootstrap period).
+#     "true"                 -> any finding fails the job (hard gate, FR-5).
+#   Flip it to "true" once the first module and the app skeleton are clean,
+#   then make every gate job a required status check in branch protection.
+#
+# Supply chain: third-party actions are pinned to full commit SHAs (tag kept
+# in a comment for Dependabot). Scanner versions are pinned explicitly.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: "1.16.5"
+  GITLEAKS_VERSION: "8.30.1"
+  SEMGREP_VERSION: "1.180.0"
+  TRIVY_IMAGE: "aquasec/trivy:0.75.0"
+  CHECKOV_VERSION: "3.3.26"
+  APP_DIR: ${{ vars.APP_DIR || 'app/docs-api' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate 1 — Secrets (Gitleaks, FULL history). Prevents T1552 at source.
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: "gate: secrets (gitleaks)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0            # full history: a secret deleted later is still leaked
+          persist-credentials: false
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      - name: Scan full git history
+        id: scan
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        run: /tmp/gitleaks git . --redact --verbose --exit-code 1
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=Secrets gate::Gitleaks found secrets. Not blocking only because ENFORCE_GATES != true. Rotate the credential FIRST, then purge history."
+          echo "### ⚠️ Secrets gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Gate 2 — SAST (Semgrep). OWASP A01/A03.
+  # ---------------------------------------------------------------------------
+  sast:
+    name: "gate: sast (semgrep)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install semgrep
+        run: python3 -m pip install --quiet "semgrep==${SEMGREP_VERSION}"
+
+      - name: Semgrep (ERROR severity fails)
+        id: scan
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        run: |
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/nodejs \
+            --severity ERROR \
+            --error \
+            --metrics off \
+            --exclude infra/ --exclude docs/
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=SAST gate::Semgrep ERROR-severity findings. Not blocking only because ENFORCE_GATES != true."
+          echo "### ⚠️ SAST gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Gate 3 — SCA (Trivy fs over lockfiles). OWASP A06.
+  # ---------------------------------------------------------------------------
+  sca:
+    name: "gate: sca (trivy fs)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trivy filesystem scan (fixable CRITICAL fails)
+        id: scan
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" "$TRIVY_IMAGE" fs \
+            --scanners vuln \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --skip-dirs /src/infra \
+            /src
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=SCA gate::Fixable CRITICAL dependency CVEs. Not blocking only because ENFORCE_GATES != true."
+          echo "### ⚠️ SCA gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Gate 4 — IaC (terraform fmt/validate + Checkov).
+  # ---------------------------------------------------------------------------
+  iac:
+    name: "gate: iac (terraform + checkov)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # fmt/validate are correctness checks, not security findings: they always
+      # hard-fail, even in fail-open mode. Broken HCL should never merge.
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff infra/terraform
+
+      # Every root AND every module: a module no environment calls yet would
+      # otherwise never be validated.
+      - name: terraform validate (every root and module)
+        run: |
+          set -euo pipefail
+          for dir in infra/terraform/bootstrap infra/terraform/environments/*/ infra/terraform/modules/*/; do
+            echo "::group::validate $dir"
+            terraform -chdir="$dir" init -backend=false -input=false -no-color
+            terraform -chdir="$dir" validate -no-color
+            echo "::endgroup::"
+          done
+
+      # Offline unit tests with a mocked AWS provider: feature flags default
+      # off, dry-run on, digest-pinned images, IMDSv2, guard-before-playbook.
+      - name: terraform test (modules with tests/)
+        run: |
+          set -euo pipefail
+          for dir in infra/terraform/modules/*/; do
+            [ -d "${dir}tests" ] || continue
+            echo "::group::test $dir"
+            terraform -chdir="$dir" test -no-color
+            echo "::endgroup::"
+          done
+
+      - name: Install checkov
+        run: python3 -m pip install --quiet "checkov==${CHECKOV_VERSION}"
+
+      # Note: open-source Checkov has no severity data without a Prisma API
+      # key, so "fail on HIGH" (plan §5) is implemented as "fail on any failed
+      # check"; accepted exceptions are inline `#checkov:skip=ID:reason`.
+      - name: Checkov
+        id: scan
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        run: |
+          checkov -d infra/terraform \
+            --framework terraform \
+            --quiet --compact \
+            --download-external-modules false
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=IaC gate::Checkov failed checks. Not blocking only because ENFORCE_GATES != true."
+          echo "### ⚠️ IaC gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Gate 5 — Image (build + Trivy image + CycloneDX SBOM). Skips until a
+  # Dockerfile exists in $APP_DIR.
+  # ---------------------------------------------------------------------------
+  image:
+    name: "gate: image (trivy image + sbom)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [secrets, sast, sca]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect Dockerfile
+        id: detect
+        run: |
+          if [ -f "$APP_DIR/Dockerfile" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No $APP_DIR/Dockerfile yet — image gate skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build image
+        if: steps.detect.outputs.present == 'true'
+        run: docker build --pull -t "cloudshield/app:${GITHUB_SHA}" "$APP_DIR"
+
+      - name: Trivy image scan (fixable CRITICAL/HIGH fails)
+        id: scan
+        if: steps.detect.outputs.present == 'true'
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" image \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1 \
+            "cloudshield/app:${GITHUB_SHA}"
+
+      - name: Generate SBOM (CycloneDX)
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          mkdir -p sbom
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/out" "$TRIVY_IMAGE" image \
+            --format cyclonedx --output /out/sbom.cdx.json "cloudshield/app:${GITHUB_SHA}"
+
+      - name: Upload SBOM
+        if: steps.detect.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom/sbom.cdx.json
+          retention-days: 90
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=Image gate::Fixable CRITICAL/HIGH image CVEs. Not blocking only because ENFORCE_GATES != true."
+          echo "### ⚠️ Image gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
+
+      # TODO(S1): on push to main, assume an ECR-push role via OIDC and push
+      # the scanned image by digest. Never push an image that was not scanned.
+
+  # ---------------------------------------------------------------------------
+  # Terraform plan via OIDC (read-only role). Runs only once bootstrap is done
+  # and the repo variables below are set, and never for fork PRs.
+  # ---------------------------------------------------------------------------
+  terraform-plan:
+    name: "terraform plan (dev)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [iac]
+    if: >-
+      vars.AWS_PLAN_ROLE_ARN != '' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      id-token: write   # required for OIDC; scoped to this job only
+    defaults:
+      run:
+        working-directory: infra/terraform/environments/dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gha-plan-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+          TF_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="region=${TF_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="kms_key_id=${TF_STATE_KMS_KEY_ARN}" \
+            -backend-config="use_lockfile=true"
+
+      - name: terraform plan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -lock-timeout=60s -no-color | tee plan.txt
+          {
+            echo "### terraform plan (dev)"
+            echo '```'
+            tail -n 40 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Gate 6 — DAST (OWASP ZAP baseline) against staging. Runs only on main /
+  # manual dispatch, and only once vars.STAGING_URL is set.
+  # ---------------------------------------------------------------------------
+  dast:
+    name: "gate: dast (zap baseline)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [image]
+    if: vars.STAGING_URL != '' && github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # -I: only rules set to FAIL in .zap/rules.tsv break the build.
+      # Rules marked FAIL in .zap/rules.tsv break the build (security headers).
+      - name: ZAP baseline
+        id: scan
+        continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
+        env:
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: |
+          mkdir -p zap && cp .zap/rules.tsv zap/ && chmod -R 777 zap
+          docker run --rm -v "$PWD/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$STAGING_URL" -c rules.tsv -I -r zap-report.html
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-report-${{ github.sha }}
+          path: zap/zap-report.html
+          if-no-files-found: ignore
+
+      - name: Report (fail-open)
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "::warning title=DAST gate::ZAP FAIL-level alerts. Not blocking only because ENFORCE_GATES != true."
+          echo "### ⚠️ DAST gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
