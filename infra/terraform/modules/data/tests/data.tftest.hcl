@@ -1,6 +1,45 @@
 # terraform test — offline, mocked AWS provider.
 
-mock_provider "aws" {}
+mock_provider "aws" {
+  # The mock fills computed attributes with random strings, which the provider
+  # then rejects wherever it validates JSON policies or ARNs. Pin realistic
+  # values for every data source the module reads and every ARN it references.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+  mock_data "aws_region" {
+    defaults = {
+      region = "us-east-1"
+    }
+  }
+  mock_data "aws_partition" {
+    defaults = {
+      partition = "aws"
+    }
+  }
+  mock_resource "aws_dynamodb_table" {
+    defaults = {
+      arn = "arn:aws:dynamodb:us-east-1:123456789012:table/mock"
+    }
+  }
+  mock_resource "aws_kms_key" {
+    defaults = {
+      arn = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+    }
+  }
+  mock_resource "aws_s3_bucket" {
+    defaults = {
+      arn = "arn:aws:s3:::mock"
+    }
+  }
+}
 
 variables {
   name               = "cs-test"
