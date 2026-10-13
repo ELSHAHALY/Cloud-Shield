@@ -6,7 +6,7 @@ TF_TEST_DIRS := $(patsubst %/tests,%,$(wildcard infra/terraform/modules/*/tests)
 
 PYTHON ?= python3
 
-.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar
+.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report
 
 help:
 	@echo "make scan           - every local gate (secrets, sast, sca, iac, soar)"
@@ -17,6 +17,8 @@ help:
 	@echo "make soar-lint      - ruff on the SOAR Lambdas"
 	@echo "make soar-test      - SOAR unit tests (moto) with coverage gate"
 	@echo "make package-soar   - deterministic Lambda zip -> build/soar-playbooks.zip"
+	@echo "make sim            - attack sim: SCENARIO=a|a-recon|b|c MODE=replay [TARGET=local|aws]"
+	@echo "make ir-report      - IR report from an incident: INCIDENT=<id> [FMT=md|json]"
 
 scan: secrets sast sca iac soar-lint soar-test
 
@@ -63,3 +65,18 @@ test:
 
 gate-selftest:
 	scripts/gate-selftest.sh all
+
+# Attack simulation (plan §7). Offline default; AWS targets need credentials.
+# e.g. make sim SCENARIO=c ACCOUNT=123456789012 NAME=cloudshield-dev SIM_ARGS="--bucket-name cloudshield-dev-lab-exposure-123456789012"
+SCENARIO ?= a-recon
+MODE     ?= replay
+TARGET   ?= local
+REGION   ?= us-east-1
+NAME     ?= cloudshield-dev
+sim:
+	cd soar && $(PYTHON) -m sims.runner --scenario $(SCENARIO) --mode $(MODE) --target $(TARGET) --allowed-account $(ACCOUNT) --region $(REGION) --name $(NAME) $(SIM_ARGS)
+
+# Incident Response report (FR-8). Needs dynamodb:GetItem + s3:GetObject.
+FMT ?= md
+ir-report:
+	cd soar && $(PYTHON) -m tools.generate_ir_report $(INCIDENT) --table $(NAME)-soar-incidents --format $(FMT)

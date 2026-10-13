@@ -43,3 +43,7 @@ output "state_machine_arn" {
 output "playbook_function_names" {
   value = { for k, f in aws_lambda_function.playbook : k => f.function_name }
 }
+
+output "evidence_bucket_arn" {
+  value = aws_s3_bucket.evidence.arn
+}

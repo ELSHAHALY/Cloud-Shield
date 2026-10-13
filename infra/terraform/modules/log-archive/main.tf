@@ -5,8 +5,10 @@
 # to the Security account unchanged — only the provider alias differs.
 #
 # Owner: S3 (SecOps). S1 consumes it for VPC Flow Logs.
-# Currently grants write access to: VPC Flow Logs (delivery.logs.amazonaws.com).
-# TODO(S3, Day 8–10): add CloudTrail + Config delivery statements here.
+# Grants write access, each only under its own prefix and scoped to this
+# account: VPC Flow Logs (vpc-flow-logs/) and, when modules/detection enables
+# them, CloudTrail (cloudtrail/), AWS Config (config/) and GuardDuty findings
+# export (guardduty/).
 ###############################################################################
 
 data "aws_caller_identity" "current" {}
@@ -18,6 +20,11 @@ locals {
   region      = data.aws_region.current.region
   partition   = data.aws_partition.current.partition
   bucket_name = "${var.name}-log-archive-${local.account_id}-${local.region}"
+
+  enable_cloudtrail = var.cloudtrail_trail_name != ""
+  # Built as strings (not references) so detection -> log-archive has no cycle.
+  trail_arn    = "arn:${local.partition}:cloudtrail:${local.region}:${local.account_id}:trail/${var.cloudtrail_trail_name}"
+  detector_arn = "arn:${local.partition}:guardduty:${local.region}:${local.account_id}:detector/*"
 }
 
 # -----------------------------------------------------------------------------
@@ -66,11 +73,80 @@ data "aws_iam_policy_document" "kms" {
   }
 }
 
+data "aws_iam_policy_document" "kms_delivery" {
+  source_policy_documents = [data.aws_iam_policy_document.kms.json]
+
+  dynamic "statement" {
+    for_each = local.enable_cloudtrail ? [1] : []
+    content {
+      sid       = "AllowCloudTrailEncrypt"
+      actions   = ["kms:GenerateDataKey*"]
+      resources = ["*"]
+      principals {
+        type        = "Service"
+        identifiers = ["cloudtrail.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceArn"
+        values   = [local.trail_arn]
+      }
+      condition {
+        test     = "StringLike"
+        variable = "kms:EncryptionContext:aws:cloudtrail:arn"
+        values   = ["arn:${local.partition}:cloudtrail:*:${local.account_id}:trail/*"]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = local.enable_cloudtrail ? [1] : []
+    content {
+      sid       = "AllowCloudTrailDescribeKey"
+      actions   = ["kms:DescribeKey"]
+      resources = ["*"]
+      principals {
+        type        = "Service"
+        identifiers = ["cloudtrail.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceArn"
+        values   = [local.trail_arn]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = var.enable_guardduty_export ? [1] : []
+    content {
+      sid       = "AllowGuardDutyExport"
+      actions   = ["kms:GenerateDataKey"]
+      resources = ["*"]
+      principals {
+        type        = "Service"
+        identifiers = ["guardduty.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceAccount"
+        values   = [local.account_id]
+      }
+      condition {
+        test     = "ArnLike"
+        variable = "aws:SourceArn"
+        values   = [local.detector_arn]
+      }
+    }
+  }
+  # AWS Config delivers with its own IAM role (modules/detection), whose
+  # identity policy grants kms:GenerateDataKey; the AccountAdmin statement
+  # delegates key access to IAM, so no Config principal is needed here.
+}
+
 resource "aws_kms_key" "this" {
   description             = "${var.name} log archive encryption"
   enable_key_rotation     = true
   deletion_window_in_days = 7
-  policy                  = data.aws_iam_policy_document.kms.json
+  policy                  = data.aws_iam_policy_document.kms_delivery.json
   tags                    = var.tags
 }
 
@@ -223,9 +299,138 @@ data "aws_iam_policy_document" "bucket" {
   }
 }
 
+# --- CloudTrail / Config / GuardDuty delivery (AWS-documented statements) ---
+# Each service may write only under its own prefix, only for this account.
+data "aws_iam_policy_document" "bucket_delivery" {
+  source_policy_documents = [data.aws_iam_policy_document.bucket.json]
+
+  dynamic "statement" {
+    for_each = local.enable_cloudtrail ? [1] : []
+    content {
+      sid       = "AWSCloudTrailAclCheck"
+      actions   = ["s3:GetBucketAcl"]
+      resources = [aws_s3_bucket.this.arn]
+      principals {
+        type        = "Service"
+        identifiers = ["cloudtrail.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceArn"
+        values   = [local.trail_arn]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = local.enable_cloudtrail ? [1] : []
+    content {
+      sid       = "AWSCloudTrailWrite"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/cloudtrail/AWSLogs/${local.account_id}/*"]
+      principals {
+        type        = "Service"
+        identifiers = ["cloudtrail.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "s3:x-amz-acl"
+        values   = ["bucket-owner-full-control"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceArn"
+        values   = [local.trail_arn]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = var.enable_config_delivery ? [1] : []
+    content {
+      sid       = "AWSConfigBucketPermissionsCheck"
+      actions   = ["s3:GetBucketAcl", "s3:ListBucket"]
+      resources = [aws_s3_bucket.this.arn]
+      principals {
+        type        = "Service"
+        identifiers = ["config.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceAccount"
+        values   = [local.account_id]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = var.enable_config_delivery ? [1] : []
+    content {
+      sid       = "AWSConfigBucketDelivery"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/config/AWSLogs/${local.account_id}/Config/*"]
+      principals {
+        type        = "Service"
+        identifiers = ["config.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "s3:x-amz-acl"
+        values   = ["bucket-owner-full-control"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceAccount"
+        values   = [local.account_id]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = var.enable_guardduty_export ? [1] : []
+    content {
+      sid       = "AllowGuardDutyGetBucketLocation"
+      actions   = ["s3:GetBucketLocation"]
+      resources = [aws_s3_bucket.this.arn]
+      principals {
+        type        = "Service"
+        identifiers = ["guardduty.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceAccount"
+        values   = [local.account_id]
+      }
+      condition {
+        test     = "ArnLike"
+        variable = "aws:SourceArn"
+        values   = [local.detector_arn]
+      }
+    }
+  }
+  dynamic "statement" {
+    for_each = var.enable_guardduty_export ? [1] : []
+    content {
+      sid       = "AllowGuardDutyPutObject"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.this.arn}/guardduty/*"]
+      principals {
+        type        = "Service"
+        identifiers = ["guardduty.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:SourceAccount"
+        values   = [local.account_id]
+      }
+      condition {
+        test     = "ArnLike"
+        variable = "aws:SourceArn"
+        values   = [local.detector_arn]
+      }
+    }
+  }
+}
+
 resource "aws_s3_bucket_policy" "this" {
   bucket = aws_s3_bucket.this.id
-  policy = data.aws_iam_policy_document.bucket.json
+  policy = data.aws_iam_policy_document.bucket_delivery.json
 
   # BPA must exist first or a race can briefly evaluate the policy without it.
   depends_on = [aws_s3_bucket_public_access_block.this]

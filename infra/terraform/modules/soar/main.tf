@@ -143,6 +143,25 @@ data "aws_iam_policy_document" "sns" {
       values   = [aws_cloudwatch_event_rule.guardduty.arn]
     }
   }
+  # Other notify-only rules (e.g. modules/detection Config NON_COMPLIANT),
+  # named rather than referenced so detection -> soar has no cycle.
+  dynamic "statement" {
+    for_each = length(var.extra_notify_rule_names) > 0 ? [1] : []
+    content {
+      sid       = "EventBridgeExtraNotifyRules"
+      actions   = ["sns:Publish"]
+      resources = [aws_sns_topic.incidents.arn]
+      principals {
+        type        = "Service"
+        identifiers = ["events.amazonaws.com"]
+      }
+      condition {
+        test     = "ArnEquals"
+        variable = "aws:SourceArn"
+        values   = [for n in var.extra_notify_rule_names : "arn:${local.partition}:events:${local.region}:${local.account_id}:rule/${n}"]
+      }
+    }
+  }
 }
 
 resource "aws_sns_topic_policy" "incidents" {

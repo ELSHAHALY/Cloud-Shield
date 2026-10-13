@@ -81,3 +81,24 @@ output "soar_dry_run_parameter" {
 output "soar_state_machine_arn" {
   value = module.soar.state_machine_arn
 }
+
+# ---------------- S3 detection / hunting ----------------
+output "athena_workgroup" {
+  value = module.detection.athena_workgroup
+}
+
+output "glue_database" {
+  value = module.detection.glue_database
+}
+
+output "hunt_queries" {
+  value = module.detection.hunt_queries
+}
+
+output "lab_targets" {
+  description = "null unless enable_lab_targets."
+  value = var.enable_lab_targets ? {
+    honeytoken_user = module.lab_targets[0].honeytoken_user_name
+    lab_bucket      = module.lab_targets[0].lab_bucket_name
+  } : null
+}
