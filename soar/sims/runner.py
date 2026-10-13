@@ -26,7 +26,7 @@ from typing import Any
 from core import aws
 from core.finding import parse_time
 from sims import scenarios
-from sims.safety import LabContext, SafetyError, require_lab
+from sims.safety import LabContext, SafetyError, require_lab, verify_targets
 
 MTTC_TARGET_SECONDS = 60.0
 
@@ -115,9 +115,12 @@ def replay_aws(
     row = _incident(clients, ctx, incident_id)
     mttc = _mttc(row)
     status = row.get("status", sfn_status)
-    passed = status in {"CONTAINED", "WOULD_CONTAIN_DRY_RUN"} and (
-        mttc is None or mttc < MTTC_TARGET_SECONDS
-    )
+    if status == "CONTAINED":
+        # A CONTAINED row without a computable MTTC cannot be said to meet the
+        # 60 s bar, so it does NOT pass (audit A3).
+        passed = mttc is not None and mttc < MTTC_TARGET_SECONDS
+    else:
+        passed = status == "WOULD_CONTAIN_DRY_RUN"
     return SimResult(
         scenario.key,
         "replay-aws",
@@ -163,6 +166,21 @@ def _dispatch(args: argparse.Namespace, clients: Any = aws.client) -> SimResult:
         live=(args.mode == "live-aws"),
         confirm_account=args.confirm_live,
     )
+    # Rule 3 (audit A1): before ANY mutating call, read each named target's
+    # live tags and refuse anything not in scope. role_id / access_key_id are
+    # derived values, not taggable resources, so only the real resources below
+    # are gated here; the pipeline's own IAM + guard remain as defence in depth.
+    scope_targets = {
+        kind: name
+        for kind, name in (
+            ("instance", args.instance_id),
+            ("user", args.user_name),
+            ("bucket", args.bucket_name),
+        )
+        if name is not None
+    }
+    verify_targets(ctx, clients, scope_targets)
+
     targets = {
         "instance_id": args.instance_id,
         "role_id": args.role_id,

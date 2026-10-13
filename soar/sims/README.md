@@ -7,12 +7,14 @@ Drives scenarios A–C through the SOAR pipeline to prove detection → containm
 Every run passes `sims/safety.py` before any AWS call:
 
 1. the caller's account must be given with `--allowed-account` (no default);
-2. the client region must equal `--region`;
-3. every target must carry `cloudshield:soar-scope=in-scope` **and** the `--name` prefix;
+2. the client must have a resolved region equal to `--region` (an unset region fails closed);
+3. before any pipeline call, each named target's **live tags are read** and it must carry `cloudshield:soar-scope=in-scope` — and, for name-identified targets (buckets, IAM users), also match the `--name` prefix (EC2 instances are identified by an opaque id, so there the tag is the sole marker);
 4. `--mode live-aws` also needs `--confirm-live <account-id>`, the account retyped;
 5. the sim only ever names resources it looked up in this account — never an external host.
 
-If any gate fails the runner exits `3` and does nothing.
+If any gate fails the runner exits `3` and does nothing. This target check (`sims.safety.verify_targets`) is independent of the pipeline's own guard, so it holds even if the SOAR `SafetyGuard` is misconfigured.
+
+> **`--target local` still calls AWS.** It drives the real playbook handlers, which read and (when dry-run is off) mutate AWS through whatever client is configured — against moto in the test suite, against the live account otherwise. The safety gates above run first regardless; keep the SSM dry-run switch on until you mean to act.
 
 ## Modes
 

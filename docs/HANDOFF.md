@@ -299,3 +299,56 @@ terraform destroy
 3. Replay GuardDuty sample findings; each must end `WOULD_CONTAIN_DRY_RUN`. Then run scenario A in dry-run.
 4. Flip dry-run off and measure MTTC.
 5. Follow-ups: a DNS Firewall quarantine (ADR-0003); the honeytoken user with the SOAR target boundary (PB-02 needs it to count as contained).
+
+---
+
+## 11. Update 14 Oct: S3 Phase C — detection, Athena hunting, attack sims
+
+Branch `feat/s3-detection-athena-sims` (off `feat/s3-soar-playbooks`). Pipeline: Planner → Builder → Independent Auditor → fixes → Validator. Plan: `docs/plans/s3-detection-athena-sims.md`.
+
+### What was built
+
+- **`modules/detection`** (new): GuardDuty detector (+ findings export to the log archive; paid S3/runtime/malware protections off), Security Hub (off; CIS v3.0.0 + PCI DSS v3.2.1 behind flags), AWS Config (recorder scoped to `AWS::S3::Bucket` for cost, the two S3 public-access rules, NON_COMPLIANT → SOAR topic), multi-region CloudTrail with **S3 data events on exactly the evidence and documents buckets** (closes gap 16), and the **`<name>-cs-forensics` Athena workgroup** (enforced 1 GiB/query scan cap, KMS results) with a Glue catalog (partition projection) for `cloudtrail`, `vpc_flow_logs` and `guardduty_findings`.
+- **`modules/log-archive`**: added per-service delivery statements (CloudTrail, Config, GuardDuty export) on the bucket and key, each scoped to its own prefix + `aws:SourceArn`/`aws:SourceAccount`. Output `depends_on` the policies so a first-apply delivery can't race.
+- **`modules/lab-targets`** (new, `enable_lab_targets`, default off): a honeytoken IAM user (SOAR target boundary, scope tag, **no access key in state**) and a tagged `*-lab-exposure` bucket (BPA on at rest). For scenarios B and C.
+- **`detection/athena-queries/`**: three parameterised hunt queries (FR-8), one per scenario, each partition-filtered under the scan cap.
+- **`soar/tools/generate_ir_report.py`**: IR report from an incident id. Recomputes every evidence SHA-256 from S3 (chain-of-custody check; exit 2 on mismatch) and MTTC vs the 60 s target. `make ir-report INCIDENT=<id>`.
+- **`soar/sims/`**: R4-gated attack-sim suite. `replay --target local` drives an in-process router (CI); `replay --target aws` StartExecutions the real `cs-ir-router` and asserts **MTTC < 60 s**; `live-aws` is operator-run. Scenario A uses live containment with replayed detection (decision D4): credentials never leave the instance. `make sim`.
+
+### Decisions (14 Oct)
+
+| # | Decision |
+|---|---|
+| D1 | SQL in `detection/athena-queries/`; Python tools + sims under `soar/` (shared `core/`, one CI job). |
+| D2 | Gated `lab-targets` module; no access key in Terraform state (sim creates/deletes it at runtime). |
+| D3 | Core detection on (GuardDuty, CloudTrail, Config-S3, Athena); Security Hub + paid GuardDuty protections off. |
+| D4 | Scenario A live = real PB-01 containment + synthetic detection; no credential leaves the instance. |
+
+### Audit: PASS WITH FIXES (1 MAJOR, 5 MINOR), all fixed
+
+| ID | Finding | Fix |
+|---|---|---|
+| A1 | The per-target scope gate (`assert_in_scope`) was **dead code**: the sim reached `StartExecution` without checking the target's prefix/tag. | `sims.safety.verify_targets` reads each target's live tags and refuses anything out of scope, before any pipeline call — independent of the SOAR guard. |
+| A2 | Region gate skipped when the client region was unset. | Fail closed on an unresolved region. |
+| A3 | `replay --target aws` passed on CONTAINED when MTTC couldn't be computed. | CONTAINED now requires a real MTTC < 60 s. |
+| A4 | The "router parity" test asserted strings, never calling `_route`. | It now routes every scenario event and compares to `state-machine.tf`. |
+| A5 | `detection.tftest.hcl` mocked away all policy JSON. | New `tests/policies.tftest.hcl` renders the real Config role/trust and Athena key policies and asserts their scoping. |
+| A6 | `--target local` silently used live AWS. | Documented; the A1 gate now runs there too. |
+
+Audit confirmed sound: the delivery IAM/KMS/bucket policies (least-privilege, per-prefix, SourceArn-scoped), the apply-ordering `depends_on`, the enforced Athena scan cap, the Glue schemas vs the real log layouts, the three queries, and the IR report's hash/MTTC logic.
+
+### Proven locally (Windows, CI-pinned versions)
+
+- ruff clean; pytest **182** at 95% branch coverage (tools + sims included).
+- `terraform fmt` clean; `validate` all dirs; `terraform test` **32/32** (detection 12, lab-targets 1, log-archive 2, soar 11, compute 5, data 2 — minus duplicates).
+- Checkov 3.3.26: **0 failed** (Config-S3-only and GuardDuty-single-account skips documented).
+- Gitleaks: no leaks. Lambda zip still byte-identical (tools/sims are not shipped in it).
+
+**Not proven:** Semgrep (crashes on Windows → first CI run); no AWS apply, so live GuardDuty/Config/Athena behaviour and real MTTC stay unverified until a dry-run replay in the lab.
+
+### Next for S3
+
+1. Merge PR #1 (SOAR engine) first, then this PR.
+2. Deploy: `enable_lab_targets = true`, upload the SOAR zip, set `soar_playbook_package` with dry-run **on**.
+3. `make sim SCENARIO=c MODE=replay TARGET=aws ...` → expect `WOULD_CONTAIN_DRY_RUN`; then dry-run off and measure MTTC; run the three hunt queries; generate the IR report.
+4. If a detector/recorder already exists in the region, import it or set `manage_guardduty_detector = false` / `enable_config = false` (detection/README.md).

@@ -8,7 +8,7 @@ See [`soar/sims/README.md`](../soar/README.md) for the runner, modes and scenari
 
 1. Only target resources in our own account (`--allowed-account` allow-list; checked against `sts:GetCallerIdentity`). Never a third-party IP or host.
 2. Use honeytoken keys only, created and deleted at run time. Real credentials are never used as "leaked" ones.
-3. Every run checks the caller's account and region, and that each target carries the scope tag **and** the name prefix, before any AWS call. It exits otherwise.
+3. Every run checks the caller's account and region, and reads each target's live tags to confirm the scope tag (plus the name prefix for buckets and IAM users), before any pipeline call. It exits otherwise. This check (`verify_targets`) is independent of the pipeline's own guard.
 4. Every live action has a matching, idempotent cleanup (for example, re-enabling Block Public Access after scenario C), run in a `finally:` block.
 5. Live mode additionally requires the account id to be retyped (`--confirm-live`).
 

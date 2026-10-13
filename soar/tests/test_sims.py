@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -170,6 +169,61 @@ def test_replay_local_scenario_b_contains(world: Any) -> None:
     assert code == 0
 
 
+def test_runner_refuses_untagged_instance_before_acting(world: Any, capsys: Any) -> None:
+    # Audit A1: the untagged worker is in the lab account but lacks the scope
+    # tag; the sim must exit 3 before any pipeline call.
+    code = _run(
+        [
+            "--scenario",
+            "a",
+            "--mode",
+            "replay",
+            "--target",
+            "local",
+            "--allowed-account",
+            ACCOUNT,
+            "--region",
+            REGION,
+            "--name",
+            "cs-dev",
+            "--instance-id",
+            world.untagged_instance_id,
+            "--role-id",
+            world.role_id,
+        ],
+        clients_factory(),
+    )
+    assert code == 3
+    assert "lacks" in capsys.readouterr().err
+    # The incident row was never created: the gate ran before RecordDetected.
+    with pytest.raises(LookupError):
+        world.incident("sim-a-" + world.untagged_instance_id)
+
+
+def test_runner_refuses_bucket_outside_prefix(world: Any, capsys: Any) -> None:
+    code = _run(
+        [
+            "--scenario",
+            "c",
+            "--mode",
+            "replay",
+            "--target",
+            "local",
+            "--allowed-account",
+            ACCOUNT,
+            "--region",
+            REGION,
+            "--name",
+            "cs-dev",
+            "--bucket-name",
+            world.untagged_bucket,
+        ],
+        clients_factory(),
+    )
+    assert code == 3
+    assert "lacks" in capsys.readouterr().err
+
+
 def test_runner_refuses_untagged_account(world: Any, capsys: Any) -> None:
     code = _run(
         [
@@ -277,15 +331,34 @@ def test_replay_aws_requires_state_machine_arn(world: Any, capsys: Any) -> None:
 
 # --------------------------------------------------------------- router parity
 def test_local_router_matches_state_machine_routing() -> None:
-    """The in-process router's routes must match cs-ir-router (state-machine.tf)."""
+    """Every scenario's _route() must agree with cs-ir-router (state-machine.tf)."""
+    from sims.local_router import _route
+
+    cases = {
+        "a": ({"instance_id": "i-0abc", "role_id": "AROAFAKEROLEID00001"}, "pb01-ec2-isolate"),
+        "a-recon": ({"instance_id": "i-0abc"}, "pb01-ec2-isolate"),
+        "b": (
+            {"user_name": "cs-dev-honeytoken", "access_key_id": "AKIAFAKEKEY000000001"},
+            "pb02-iam-key-revoke",
+        ),
+        "c": ({"bucket_name": "cs-dev-lab-exposure"}, "pb03-s3-restore-bpa"),
+    }
+    sm_next = {
+        "pb01-ec2-isolate": "PB01Isolate",
+        "pb02-iam-key-revoke": "PB02Revoke",
+        "pb03-s3-restore-bpa": "PB03Restore",
+    }
     tf = (
         Path(__file__).resolve().parents[2] / "infra/terraform/modules/soar/state-machine.tf"
     ).read_text(encoding="utf-8")
     block = tf.split("RouteByResource = {", 1)[1].split('Default = "NoPlaybook"', 1)[0]
-    # Each scenario's finding routes to its expected playbook via the real table.
-    assert '"PB01Isolate"' in block
-    assert re.search(r'StringEquals\s*=\s*"S3Bucket".*?"PB03Restore"', block, re.DOTALL)
-    assert re.search(r'StringEquals\s*=\s*"AccessKey".*?"PB02Revoke"', block, re.DOTALL)
+
+    for key, (targets, expected_pb) in cases.items():
+        event = scenarios.build_event(scenarios.SCENARIOS[key], ACCOUNT, REGION, **targets)
+        route = _route(event)
+        assert route is not None, f"{key} did not route"
+        assert route[0] == expected_pb, f"{key} routed to {route}"
+        assert sm_next[expected_pb] in block, f"{sm_next[expected_pb]} missing from RouteByResource"
 
 
 def test_parser_rejects_unknown_scenario() -> None:
@@ -357,3 +430,54 @@ def test_replay_aws_asserts_mttc_and_contained(world: Any) -> None:
     assert result.mttc_seconds < 60
     assert "cs-dev-cs-ir-router" in result.execution_arn
     assert result.detail["sfn_status"] == "SUCCEEDED"
+
+
+# --------------------------------------------------------------- safety internals
+def test_region_must_be_resolved(world: Any, monkeypatch: Any) -> None:
+    class NoRegionSts:
+        class meta:
+            region_name = None
+
+        def get_caller_identity(self) -> dict[str, Any]:
+            return {"Account": ACCOUNT}
+
+    def clients(service: str, **kw: Any) -> Any:
+        return NoRegionSts() if service == "sts" else boto3.client(service, **kw)
+
+    with pytest.raises(SafetyError, match="no resolved region"):
+        require_lab(clients, [ACCOUNT], REGION, PREFIX)
+
+
+def test_read_target_tags_for_user_and_bucket(world: Any) -> None:
+    from sims.safety import read_target_tags
+
+    assert (
+        read_target_tags(boto3.client, "user", world.user_name)["cloudshield:soar-scope"]
+        == "in-scope"
+    )
+    # A bucket with no tag set returns {} rather than raising.
+    assert read_target_tags(boto3.client, "bucket", world.untagged_bucket) == {}
+
+
+def test_read_target_tags_unknown_kind_raises(world: Any) -> None:
+    from sims.safety import read_target_tags
+
+    with pytest.raises(SafetyError, match="unknown target kind"):
+        read_target_tags(boto3.client, "role", "whatever")
+
+
+def test_read_target_tags_missing_instance_raises(world: Any) -> None:
+    from sims.safety import read_target_tags
+
+    with pytest.raises(SafetyError, match="not found"):
+        read_target_tags(boto3.client, "instance", "i-0fffffffffffffff0")
+
+
+def test_assert_in_scope_instance_skips_prefix(world: Any) -> None:
+    from sims.safety import LabContext, assert_in_scope
+
+    ctx = LabContext(ACCOUNT, REGION, PREFIX, "cloudshield:soar-scope", "in-scope")
+    # An instance id never starts with the name prefix; the tag alone governs.
+    assert_in_scope(ctx, "i-0abc", {"cloudshield:soar-scope": "in-scope"}, require_prefix=False)
+    with pytest.raises(SafetyError, match="lacks"):
+        assert_in_scope(ctx, "i-0abc", {}, require_prefix=False)
