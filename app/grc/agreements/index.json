@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1",
+  "agreements": [
+    {
+      "agreementId": "dpa",
+      "version": "2026-10",
+      "title": "Data Processing Agreement (template)",
+      "file": "dpa-2026-10.txt",
+      "effectiveDate": "2026-10-16",
+      "required": true,
+      "current": true
+    },
+    {
+      "agreementId": "sla",
+      "version": "2026-10",
+      "title": "Service Level Agreement (template)",
+      "file": "sla-2026-10.txt",
+      "effectiveDate": "2026-10-16",
+      "required": true,
+      "current": true
+    }
+  ]
+}

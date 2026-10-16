@@ -1,0 +1,80 @@
+CLOUDSHIELD DATA PROCESSING AGREEMENT (TEMPLATE, VERSION 2026-10)
+
+STATUS: Template prepared for an academic capstone. It has not been reviewed
+by legal counsel and is not legal advice. Do not rely on it for production
+personal data without review.
+
+1. Parties and roles
+1.1 The customer ("Controller") is the tenant organisation named by its
+    CloudShield tenant identifier. The operator of the CloudShield platform
+    ("Processor") processes documents and their metadata on the Controller's
+    behalf.
+1.2 This agreement is intended to address GDPR Article 28(3) and is concluded
+    in electronic form (GDPR Article 28(9)). Equivalent obligations under
+    Egypt Law No. 151 of 2020 and the Saudi Personal Data Protection Law are
+    addressed to the extent mapped in the CloudShield GRC hub (items marked
+    "verify" there are not established).
+
+2. Subject matter, duration, nature and purpose
+2.1 Subject matter: storage, retrieval, deletion and audit of documents the
+    Controller uploads.
+2.2 Duration: from acceptance until the tenant is closed, plus the erasure
+    period in clause 9.
+2.3 Categories of data subjects and personal data: as decided by the
+    Controller. The Controller classifies each document (public, internal,
+    confidential, restricted).
+
+3. Instructions
+3.1 The Processor processes personal data only on the Controller's
+    documented instructions, which are the Controller's use of the CloudShield
+    API and portal, unless required by applicable law.
+
+4. Confidentiality
+4.1 Persons authorised to process the personal data are bound by
+    confidentiality. Platform security staff (the SecOps role) have no access
+    to tenant documents.
+
+5. Security (GDPR Article 32)
+5.1 Encryption at rest with customer-managed KMS keys; TLS from the browser
+    to the edge and to the API; mandatory TOTP multi-factor authentication;
+    a web application firewall at the edge; automated containment playbooks;
+    an insert-only audit trail (conditional writes, no update or delete
+    permission). The last hop inside the platform network is plain HTTP over
+    AWS PrivateLink.
+5.2 Tenant isolation is enforced by the application and the data partition
+    key; it is not cryptographic.
+
+6. Sub-processors
+6.1 Amazon Web Services, Inc. (hosting, region us-east-1). The Controller
+    authorises this sub-processor by accepting this agreement.
+
+7. Data subject rights
+7.1 The Processor provides document listing, download and deletion through
+    the API so the Controller can answer requests.
+
+8. Personal data breaches
+8.1 The Processor notifies the Controller without undue delay after becoming
+    aware of a personal data breach affecting the Controller's data, with the
+    incident report produced by the platform.
+
+9. Deletion and return
+9.1 Deleting a document removes its metadata at once and places a delete
+    marker on its stored object; earlier object versions expire within 30
+    days. Point-in-time backups of metadata expire within 35 days.
+
+10. Audits
+10.1 The Controller's administrators and auditors can read the tenant audit
+     trail at any time.
+
+11. International transfers
+11.1 Data is hosted in the United States (AWS us-east-1). Transfers rely on
+     safeguards to be agreed (for example standard contractual clauses under
+     Commission Implementing Decision (EU) 2021/914) or an adequacy decision
+     where it applies.
+
+12. Acceptance
+12.1 Acceptance is recorded as a click-through by an MFA-authenticated tenant
+     administrator who confirms authority to bind the tenant. The record
+     holds the text's SHA-256, the time, the user identifier, the source IP
+     and the request identifier. This is evidence of acceptance, not a
+     qualified or advanced electronic signature.

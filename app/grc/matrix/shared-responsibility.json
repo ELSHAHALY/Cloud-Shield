@@ -1,0 +1,371 @@
+{
+  "schemaVersion": "1",
+  "version": "2026.10.0",
+  "lastReviewed": "2026-10-16",
+  "disclaimer": "AWS cells describe what CloudShield builds. Azure and GCP cells are mapped equivalents for comparison only: not built, not tested, and product names marked verify may be out of date.",
+  "providers": [
+    "aws",
+    "azure",
+    "gcp"
+  ],
+  "controls": [
+    {
+      "id": "edge-waf",
+      "control": "Edge WAF + rate limit",
+      "layer": "network",
+      "cells": {
+        "aws": {
+          "service": "AWS WAF on CloudFront (+ regional WAF on API Gateway)",
+          "responsibility": "shared",
+          "notes": "Rules and rate limits are CloudShield's; the service is AWS's.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Azure Front Door WAF",
+          "responsibility": "shared",
+          "notes": "Equivalent edge WAF.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Cloud Armor",
+          "responsibility": "shared",
+          "notes": "Equivalent edge WAF.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "identity-mfa",
+      "control": "Identity + MFA",
+      "layer": "identity",
+      "cells": {
+        "aws": {
+          "service": "Amazon Cognito (SRP + TOTP, MFA ON)",
+          "responsibility": "shared",
+          "notes": "User lifecycle and group assignment are the tenant admin's.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Microsoft Entra External ID",
+          "responsibility": "shared",
+          "notes": "Product naming changes often.",
+          "status": "mapped",
+          "verify": true
+        },
+        "gcp": {
+          "service": "Identity Platform",
+          "responsibility": "shared",
+          "notes": "Equivalent CIAM.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "key-management",
+      "control": "Key management",
+      "layer": "data",
+      "cells": {
+        "aws": {
+          "service": "AWS KMS customer-managed keys",
+          "responsibility": "shared",
+          "notes": "Key policy and rotation are CloudShield's.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Azure Key Vault",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Cloud KMS",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "containers",
+      "control": "Containers",
+      "layer": "compute",
+      "cells": {
+        "aws": {
+          "service": "Amazon ECS on Fargate",
+          "responsibility": "shared",
+          "notes": "Guest OS is AWS's; image and task definition are CloudShield's.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Azure Container Apps",
+          "responsibility": "shared",
+          "notes": "Equivalent serverless containers.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Cloud Run",
+          "responsibility": "shared",
+          "notes": "Equivalent serverless containers.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "image-scanning",
+      "control": "Image scanning",
+      "layer": "supply-chain",
+      "cells": {
+        "aws": {
+          "service": "Amazon ECR scan-on-push + Trivy in CI",
+          "responsibility": "shared",
+          "notes": "CI pushes only images with no fixable CRITICAL/HIGH at scan time.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Microsoft Defender for Containers",
+          "responsibility": "shared",
+          "notes": "Equivalent registry scanning.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Artifact Analysis",
+          "responsibility": "shared",
+          "notes": "Equivalent registry scanning.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "threat-detection",
+      "control": "Threat detection",
+      "layer": "detection",
+      "cells": {
+        "aws": {
+          "service": "Amazon GuardDuty",
+          "responsibility": "shared",
+          "notes": "Findings feed the SOAR router.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Microsoft Defender for Cloud",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Security Command Center",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "soar",
+      "control": "SOAR",
+      "layer": "response",
+      "cells": {
+        "aws": {
+          "service": "EventBridge + Step Functions + Lambda (PB-01..PB-05)",
+          "responsibility": "customer",
+          "notes": "Playbooks, guard and evidence are CloudShield's code.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Microsoft Sentinel + Logic Apps",
+          "responsibility": "customer",
+          "notes": "Equivalent automation.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Google SecOps SOAR / Workflows",
+          "responsibility": "customer",
+          "notes": "Product mapping not checked.",
+          "status": "mapped",
+          "verify": true
+        }
+      }
+    },
+    {
+      "id": "evidence-worm",
+      "control": "Evidence WORM",
+      "layer": "forensics",
+      "cells": {
+        "aws": {
+          "service": "S3 Object Lock (GOVERNANCE, off by default)",
+          "responsibility": "shared",
+          "notes": "Enabled only when evidence_object_lock_days > 0.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Immutable Blob Storage (WORM)",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Bucket Lock",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "audit-logs",
+      "control": "Audit / logs",
+      "layer": "detection",
+      "cells": {
+        "aws": {
+          "service": "CloudTrail, VPC Flow Logs, WAF logs; app audit table (insert-only by convention)",
+          "responsibility": "shared",
+          "notes": "The app audit table is not WORM.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Activity Log, VNet flow logs",
+          "responsibility": "shared",
+          "notes": "Flow-log product naming changes.",
+          "status": "mapped",
+          "verify": true
+        },
+        "gcp": {
+          "service": "Cloud Audit Logs, VPC Flow Logs",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "posture",
+      "control": "Posture",
+      "layer": "governance",
+      "cells": {
+        "aws": {
+          "service": "AWS Config / Security Hub",
+          "responsibility": "shared",
+          "notes": "Not all are enabled by default in dev.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Azure Policy / Defender CSPM",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Security Command Center posture",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "tenant-data",
+      "control": "Tenant data store",
+      "layer": "data",
+      "cells": {
+        "aws": {
+          "service": "DynamoDB (PITR) + S3 (versioned, SSE-KMS)",
+          "responsibility": "shared",
+          "notes": "Tenant isolation by partition key, not cryptographic.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "Cosmos DB (continuous backup)",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "Firestore (PITR)",
+          "responsibility": "shared",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    },
+    {
+      "id": "supply-chain",
+      "control": "Supply chain",
+      "layer": "supply-chain",
+      "cells": {
+        "aws": {
+          "service": "GitHub OIDC → Amazon ECR (immutable tags)",
+          "responsibility": "customer",
+          "notes": "CI gates are CloudShield's.",
+          "status": "built",
+          "verify": false
+        },
+        "azure": {
+          "service": "GitHub OIDC → Azure Container Registry",
+          "responsibility": "customer",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        },
+        "gcp": {
+          "service": "GitHub OIDC → Artifact Registry",
+          "responsibility": "customer",
+          "notes": "Equivalent.",
+          "status": "mapped",
+          "verify": false
+        }
+      }
+    }
+  ],
+  "layers": [
+    {
+      "layer": "Physical, network fabric, hypervisor",
+      "owner": "Provider",
+      "notes": "Always the cloud provider."
+    },
+    {
+      "layer": "Guest OS / runtime",
+      "owner": "Provider for Fargate, Cloud Run and Container Apps; customer for IaaS",
+      "notes": "CloudShield's report-worker EC2 is IaaS: its OS is CloudShield's."
+    },
+    {
+      "layer": "Application, container image",
+      "owner": "CloudShield (platform operator)",
+      "notes": "docs-api, SPA, SOAR code and their images."
+    },
+    {
+      "layer": "Data, identities, access configuration",
+      "owner": "Customer (tenant), always",
+      "notes": "Tenants decide what they upload, who is in which group and which agreements they accept."
+    }
+  ]
+}

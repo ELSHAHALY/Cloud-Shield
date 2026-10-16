@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloudshield.local/grc/profile.schema.json",
+  "title": "Tenant GRC profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jurisdictions",
+    "sector",
+    "cbeRegulated",
+    "processesPersonalData",
+    "processesSensitiveData",
+    "governmentData",
+    "dataSubjectRegions"
+  ],
+  "properties": {
+    "jurisdictions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "EG",
+          "EU",
+          "SA"
+        ]
+      }
+    },
+    "sector": {
+      "enum": [
+        "general",
+        "financial",
+        "health",
+        "government",
+        "critical-infrastructure"
+      ]
+    },
+    "cbeRegulated": {
+      "type": "boolean"
+    },
+    "processesPersonalData": {
+      "type": "boolean"
+    },
+    "processesSensitiveData": {
+      "type": "boolean"
+    },
+    "governmentData": {
+      "type": "boolean"
+    },
+    "dataSubjectRegions": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "EG",
+          "EU",
+          "SA",
+          "OTHER"
+        ]
+      }
+    }
+  }
+}
