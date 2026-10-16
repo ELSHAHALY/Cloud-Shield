@@ -135,3 +135,154 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+# -----------------------------------------------------------------------------
+# Phase D: PB-04 (ECS task containment) and PB-05 (WAF IP block). Both are
+# plan-time bools (D6) and need playbook_package as well. Off by default.
+# -----------------------------------------------------------------------------
+variable "enable_pb04" {
+  description = "Create PB-04 (stop a compromised ECS task + redeploy its service). Dev sets it only with a container image, GuardDuty Runtime Monitoring and the scope-tagged app service (D19, F20)."
+  type        = bool
+  default     = false
+}
+
+variable "ecs_cluster_name" {
+  description = "PB-04: the only ECS cluster it may act in (IAM ARNs are built from it)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_pb04 || can(regex("^[A-Za-z0-9_-]{1,255}$", var.ecs_cluster_name))
+    error_message = "enable_pb04 needs ecs_cluster_name (1-255 letters, digits, - or _)."
+  }
+}
+
+variable "ecs_cluster_arn" {
+  description = "PB-04: ARN of ecs_cluster_name (the ecs:cluster condition value and ECS_CLUSTER_ARN)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_pb04 || var.ecs_cluster_arn != null
+    error_message = "enable_pb04 needs ecs_cluster_arn."
+  }
+}
+
+variable "ecs_service_names" {
+  description = "PB-04: the only ECS services it may redeploy (and whose tasks it may stop)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !var.enable_pb04 || length(var.ecs_service_names) > 0
+    error_message = "enable_pb04 needs at least one ECS service name."
+  }
+  validation {
+    condition     = alltrue([for s in var.ecs_service_names : can(regex("^[A-Za-z0-9_-]{1,255}$", s))])
+    error_message = "ECS service names are 1-255 letters, digits, - or _."
+  }
+}
+
+variable "enable_pb05" {
+  description = "Create PB-05 (block a client IP in the CloudFront WAF), the dedicated edge bus, the never-block list and the rate-rule harvester. Requires us-east-1 (F2)."
+  type        = bool
+  default     = false
+}
+
+variable "block_ip_set_arns" {
+  description = "PB-05: the two CLOUDFRONT-scope IP sets it may append to (modules/edge block_ip_set_arns, v4 and v6)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !var.enable_pb05 || length(var.block_ip_set_arns) == 2
+    error_message = "enable_pb05 needs exactly the two PB-05 IP set ARNs (IPv4 and IPv6)."
+  }
+}
+
+variable "waf_web_acl" {
+  description = "PB-05 harvester: the CloudFront web ACL holding the rate rule (modules/edge cloudfront_web_acl)."
+  type = object({
+    name = string
+    id   = string
+    arn  = string
+  })
+  default = null
+
+  validation {
+    condition     = !var.enable_pb05 || var.waf_web_acl != null
+    error_message = "enable_pb05 needs waf_web_acl."
+  }
+}
+
+variable "waf_rate_rule_name" {
+  description = "PB-05 harvester: name of the per-IP rate-based rule (modules/edge rate_rule_name)."
+  type        = string
+  default     = "RateLimitPerIp"
+}
+
+variable "pb05_publisher_arns" {
+  description = "IAM role ARNs allowed to publish onto the edge bus besides the harvester (Phase E: the docs-api task role; optionally an operator replay role). Everyone else is explicitly denied."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for a in var.pb05_publisher_arns : can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/", a))])
+    error_message = "pb05_publisher_arns must be IAM role ARNs."
+  }
+}
+
+variable "pb05_never_block_cidrs" {
+  description = "Operator CIDRs PB-05 must never block (added to the NAT EIP /32 in the never-block SSM parameter)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.pb05_never_block_cidrs : can(cidrhost(c, 0))])
+    error_message = "pb05_never_block_cidrs must be CIDRs (e.g. 198.51.100.7/32)."
+  }
+}
+
+variable "nat_public_ip" {
+  description = "The VPC's NAT egress IP (modules/network nat_public_ip); seeded into the never-block list."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.nat_public_ip == null || can(cidrhost("${var.nat_public_ip}/32", 0))
+    error_message = "nat_public_ip must be an IPv4 address."
+  }
+}
+
+variable "pb05_block_ttl_hours" {
+  description = "blockExpiresAt = block time + this. Nothing lifts a block automatically (D15)."
+  type        = number
+  default     = 24
+
+  validation {
+    condition     = var.pb05_block_ttl_hours >= 1 && var.pb05_block_ttl_hours <= 168 && floor(var.pb05_block_ttl_hours) == var.pb05_block_ttl_hours
+    error_message = "pb05_block_ttl_hours must be a whole number from 1 to 168."
+  }
+}
+
+variable "pb05_ip_set_max" {
+  description = "PB-05 refuses to grow an IP set beyond this many entries (WAF allows 10,000; F23)."
+  type        = number
+  default     = 1000
+
+  validation {
+    condition     = var.pb05_ip_set_max >= 1 && var.pb05_ip_set_max <= 9000 && floor(var.pb05_ip_set_max) == var.pb05_ip_set_max
+    error_message = "pb05_ip_set_max must be a whole number from 1 to 9000."
+  }
+}
+
+variable "pb05_harvest_schedule" {
+  description = "Optional extra harvester trigger, e.g. \"rate(5 minutes)\", for IPs that become rate-limited while the alarm is already in ALARM. null = alarm transitions only."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.pb05_harvest_schedule == null || can(regex("^(rate|cron)[(].+[)]$", var.pb05_harvest_schedule))
+    error_message = "pb05_harvest_schedule must be an EventBridge rate(...) or cron(...) expression."
+  }
+}

@@ -5,9 +5,11 @@
 #                                                   └─ anything else ─► RecordBlocked ─► Notify   (fail closed)
 #        InstanceCredentialExfiltration* / Instance ─► PB01Isolate ─┐
 #        AccessKey (IAM user)                       ─► PB02Revoke  ─┼─► IsDryRun
-#        S3Bucket + Policy:S3/Bucket*               ─► PB03Restore ─┘
+#        S3Bucket + Policy:S3/Bucket*               ─► PB03Restore ─┤
+#        ECSCluster + *:Runtime/*      (enable_pb04) ─► PB04Contain ─┤
+#        source cloudshield.edge + IPAddress (pb05) ─► PB05Block   ─┘
 #   IsDryRun ─┬─ not explicitly false ─► MarkWouldContain ─► Notify          (fail closed)
-#             └─ false ─► CheckContained ─┬─ contained==true ─► MarkContained ─► (PB01Snapshot | PB03Evidence) ─► Notify
+#             └─ false ─► CheckContained ─┬─ contained==true ─► MarkContained ─► (PB01Snapshot | PB03Evidence | PB04Evidence) ─► Notify
 #                                         └─ otherwise ─► RecordFailed ─► Notify
 #        other     ─► NoPlaybook ─► Notify
 #   any failure    ─► RecordFailed ─► Notify
@@ -36,10 +38,118 @@ locals {
 
   incident_key = { incidentId = { "S.$" = "$.detail.id" } }
 
+  # RouteByResource choices: concat() of conditional lists, so the graph stays
+  # valid with PB-04 / PB-05 off (plan §4.3).
+  route_choices = concat(
+    [
+      # Scenario A: stolen instance-role credentials. GuardDuty reports these
+      # with resourceType "AccessKey", but the response is PB-01 (isolate
+      # the instance + revoke the ROLE's sessions), not PB-02 (IAM users).
+      # PB-01 derives the instance id from accessKeyDetails.principalId.
+      { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Isolate" },
+      { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Isolate" },
+      { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey", Next = "PB02Revoke" },
+      # Scenario C: only public-exposure findings. Block Public Access does
+      # not stop Exfiltration:S3/* or Impact:S3/* by an authenticated
+      # principal, so those go to an analyst instead (audit A1).
+      {
+        And = [
+          { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket" },
+          { Variable = "$.detail.type", StringMatches = "Policy:S3/Bucket*" },
+        ]
+        Next = "PB03Restore"
+      },
+    ],
+    # Scenario D: GuardDuty Runtime Monitoring on an ECS task. Only >= High
+    # findings reach the router (D19: no always_route entry for Runtime).
+    local.enable_pb04 ? [{
+      And = [
+        { Variable = "$.detail.resource.resourceType", StringEquals = "ECSCluster" },
+        { Variable = "$.detail.type", StringMatches = "*:Runtime/*" },
+      ]
+      Next = "PB04Contain"
+    }] : [],
+    # Scenario E: only edge events (the dedicated bus) naming an IP. GuardDuty
+    # never has source cloudshield.edge, so it can never reach PB-05. IsPresent
+    # first: a Choice on a missing path raises an uncatchable States.Runtime.
+    local.enable_pb05 ? [{
+      And = [
+        { Variable = "$.source", IsPresent = true },
+        { Variable = "$.source", StringEquals = local.edge_event_source },
+        { Variable = "$.detail.resource.resourceType", StringEquals = "IPAddress" },
+      ]
+      Next = "PB05Block"
+    }] : [],
+  )
+
+  evidence_choices = concat(
+    [
+      { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Snapshot" },
+      { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Snapshot" },
+      { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket", Next = "PB03Evidence" },
+    ],
+    local.enable_pb04 ? [
+      { Variable = "$.detail.resource.resourceType", StringEquals = "ECSCluster", Next = "PB04Evidence" },
+    ] : [],
+  )
+
+  # Built as JSON strings so the "off" branch ("{}") needs no matching type.
+  pb04_states = local.enable_pb04 ? jsonencode({
+    PB04Contain = {
+      Type     = "Task"
+      Resource = "arn:${local.partition}:states:::lambda:invoke"
+      Parameters = {
+        FunctionName = lookup(local.fn, "soar-pb04-ecs-task-contain", null)
+        Payload      = { action = "contain", "event.$" = "$" }
+      }
+      ResultSelector = { "result.$" = "$.Payload" }
+      ResultPath     = "$.containment"
+      Retry          = local.lambda_retry
+      Catch          = local.catch_to_failed
+      Next           = "IsDryRun"
+    }
+    # After CONTAINED: the task pre-state (captured by PB04Contain before
+    # StopTask) becomes hashed evidence. Outside the MTTC window; a failure
+    # here does not un-contain the incident.
+    PB04Evidence = {
+      Type     = "Task"
+      Resource = "arn:${local.partition}:states:::lambda:invoke"
+      Parameters = {
+        FunctionName = lookup(local.fn, "soar-pb04-ecs-task-contain", null)
+        Payload      = { action = "evidence", "event.$" = "$" }
+      }
+      ResultSelector = { "result.$" = "$.Payload" }
+      ResultPath     = "$.evidence"
+      Retry          = local.lambda_retry
+      Catch = [{
+        ErrorEquals = ["States.ALL"]
+        ResultPath  = "$.evidenceError"
+        Next        = "Notify"
+      }]
+      Next = "Notify"
+    }
+  }) : "{}"
+
+  pb05_states = local.enable_pb05 ? jsonencode({
+    PB05Block = {
+      Type     = "Task"
+      Resource = "arn:${local.partition}:states:::lambda:invoke"
+      Parameters = {
+        FunctionName = lookup(local.fn, "soar-pb05-waf-ip-block", null)
+        Payload      = { action = "block", "event.$" = "$" }
+      }
+      ResultSelector = { "result.$" = "$.Payload" }
+      ResultPath     = "$.containment"
+      Retry          = local.lambda_retry
+      Catch          = local.catch_to_failed
+      Next           = "IsDryRun"
+    }
+  }) : "{}"
+
   definition = local.enable_playbooks ? {
     Comment = "CloudShield IR router — automation stops at CONTAINED"
     StartAt = "RecordDetected"
-    States = {
+    States = merge({
       RecordDetected = {
         Type     = "Task"
         Resource = "arn:${local.partition}:states:::dynamodb:updateItem"
@@ -117,27 +227,10 @@ locals {
         Default = "RecordBlocked"
       }
 
+      # Reachable ONLY from GuardDecision (allowed == true). Choices above.
       RouteByResource = {
-        Type = "Choice"
-        Choices = [
-          # Scenario A: stolen instance-role credentials. GuardDuty reports these
-          # with resourceType "AccessKey", but the response is PB-01 (isolate
-          # the instance + revoke the ROLE's sessions), not PB-02 (IAM users).
-          # PB-01 derives the instance id from accessKeyDetails.principalId.
-          { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Isolate" },
-          { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Isolate" },
-          { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey", Next = "PB02Revoke" },
-          # Scenario C: only public-exposure findings. Block Public Access does
-          # not stop Exfiltration:S3/* or Impact:S3/* by an authenticated
-          # principal, so those go to an analyst instead (audit A1).
-          {
-            And = [
-              { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket" },
-              { Variable = "$.detail.type", StringMatches = "Policy:S3/Bucket*" },
-            ]
-            Next = "PB03Restore"
-          },
-        ]
+        Type    = "Choice"
+        Choices = local.route_choices
         Default = "NoPlaybook"
       }
 
@@ -240,12 +333,8 @@ locals {
       }
 
       NeedsEvidence = {
-        Type = "Choice"
-        Choices = [
-          { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Snapshot" },
-          { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Snapshot" },
-          { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket", Next = "PB03Evidence" },
-        ]
+        Type    = "Choice"
+        Choices = local.evidence_choices
         Default = "Notify"
       }
 
@@ -375,7 +464,7 @@ locals {
         ResultPath = null
         End        = true
       }
-    }
+    }, jsondecode(local.pb04_states), jsondecode(local.pb05_states))
   } : null
 }
 

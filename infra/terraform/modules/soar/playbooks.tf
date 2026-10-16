@@ -10,7 +10,7 @@
 ###############################################################################
 
 locals {
-  playbooks = local.enable_playbooks ? {
+  playbooks = merge(local.enable_playbooks ? {
     "soar-safety-guard" = {
       handler = "safety_guard.handler.lambda_handler"
       timeout = 10
@@ -31,7 +31,19 @@ locals {
       timeout = 30 # pre-state reads + restore + verify retries; evidence is a separate step
       policy  = data.aws_iam_policy_document.pb03.json
     }
-  } : {}
+    } : {}, local.enable_pb04 ? {
+    "soar-pb04-ecs-task-contain" = {
+      handler = "playbooks.pb04_ecs_task_contain.lambda_handler"
+      timeout = 55 # StopTask + redeploy + ~45 s of verification polling (F21)
+      policy  = one(data.aws_iam_policy_document.pb04[*].json)
+    }
+    } : {}, local.enable_pb05 ? {
+    "soar-pb05-waf-ip-block" = {
+      handler = "playbooks.pb05_waf_ip_block.lambda_handler"
+      timeout = 20
+      policy  = one(data.aws_iam_policy_document.pb05[*].json)
+    }
+  } : {})
 
   lambda_env = {
     DRY_RUN_PARAM        = aws_ssm_parameter.dry_run.name
@@ -45,6 +57,14 @@ locals {
     QUARANTINE_NACL_RULE = tostring(var.quarantine_nacl_rule_number)
     REVOCABLE_ROLE_ARNS  = join(",", var.revocable_role_arns)
     BUCKET_NAME_PREFIX   = "${var.name}-"
+    ECS_CLUSTER_ARN      = local.enable_pb04 ? var.ecs_cluster_arn : ""
+    ECS_SERVICE_NAMES    = local.enable_pb04 ? join(",", var.ecs_service_names) : ""
+    BLOCK_IP_SET_ARNS    = local.enable_pb05 ? join(",", var.block_ip_set_arns) : ""
+    BLOCK_IP_SET_MAX     = tostring(var.pb05_ip_set_max)
+    BLOCK_TTL_HOURS      = tostring(var.pb05_block_ttl_hours)
+    WAF_REGION           = local.enable_pb05 ? local.region : ""
+    NEVER_BLOCK_PARAM    = local.enable_pb05 ? local.never_block_param_name : ""
+    EDGE_EVENT_SOURCE    = local.enable_pb05 ? local.edge_event_source : ""
   }
 
   scope_condition_key = "aws:ResourceTag/${local.scope_tag_key}"
@@ -53,6 +73,15 @@ locals {
     for id in var.quarantine_network_acl_ids :
     "arn:${local.partition}:ec2:${local.region}:${local.account_id}:network-acl/${id}"
   ]
+
+  # PB-04: ARNs are built from names (plan-time strings, F4/D6).
+  ecs_task_arns = local.enable_pb04 ? [
+    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:task/${var.ecs_cluster_name}/*"
+  ] : []
+  ecs_service_arns = local.enable_pb04 ? [
+    for s in var.ecs_service_names :
+    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:service/${var.ecs_cluster_name}/${s}"
+  ] : []
 }
 
 # -----------------------------------------------------------------------------
@@ -63,6 +92,29 @@ data "aws_iam_policy_document" "safety_guard" {
     sid       = "ReadSwitches"
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.dry_run.arn, aws_ssm_parameter.scope_tag.arn]
+  }
+  # PB-04 rule 3: the LIVE task's tags, cluster and group, in our cluster only.
+  dynamic "statement" {
+    for_each = local.enable_pb04 ? [1] : []
+    content {
+      sid       = "ReadEcsTaskInScopeCluster"
+      actions   = ["ecs:DescribeTasks"]
+      resources = local.ecs_task_arns
+      condition {
+        test     = "ArnEquals"
+        variable = "ecs:cluster"
+        values   = [var.ecs_cluster_arn]
+      }
+    }
+  }
+  # PB-05 rule 4: the never-block list, read on every call.
+  dynamic "statement" {
+    for_each = local.enable_pb05 ? [1] : []
+    content {
+      sid       = "ReadNeverBlockList"
+      actions   = ["ssm:GetParameter"]
+      resources = [one(aws_ssm_parameter.never_block[*].arn)]
+    }
   }
   statement {
     sid = "ReadTargetTags"
@@ -258,6 +310,88 @@ data "aws_iam_policy_document" "pb03" {
     sid       = "WriteEvidence"
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.evidence.arn}/incidents/*"]
+  }
+}
+
+# PB-04 (plan §4.1). IAM never grants RunTask, DeleteService, PassRole or
+# ExecuteCommand, nor UpdateService on any service outside the allow-list.
+# UpdateService cannot be narrowed to forceNewDeployment by IAM; the code only
+# ever sends that, and needs no iam:PassRole because the task definition is
+# unchanged (F22).
+data "aws_iam_policy_document" "pb04" {
+  count = local.enable_pb04 ? 1 : 0
+
+  statement {
+    sid       = "ReadTask"
+    actions   = ["ecs:DescribeTasks"]
+    resources = local.ecs_task_arns
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs_cluster_arn]
+    }
+  }
+  statement {
+    sid       = "StopInScopeTask"
+    actions   = ["ecs:StopTask"]
+    resources = local.ecs_task_arns
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs_cluster_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = local.scope_condition_key
+      values   = [local.scope_tag_value]
+    }
+  }
+  statement {
+    sid       = "ReadService"
+    actions   = ["ecs:DescribeServices"]
+    resources = local.ecs_service_arns
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs_cluster_arn]
+    }
+  }
+  statement {
+    sid       = "RedeployInScopeService"
+    actions   = ["ecs:UpdateService"]
+    resources = local.ecs_service_arns
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs_cluster_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = local.scope_condition_key
+      values   = [local.scope_tag_value]
+    }
+  }
+  statement {
+    sid       = "ReadTaskDefinition"
+    actions   = ["ecs:DescribeTaskDefinition"]
+    resources = ["*"] # no resource-level permissions for this action (F22)
+  }
+  statement {
+    sid       = "WriteEvidence"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.evidence.arn}/incidents/*"]
+  }
+}
+
+# PB-05 (plan §4.2): read and append to exactly the two block lists. No
+# UpdateWebACL, Delete* or CreateIPSet anywhere.
+data "aws_iam_policy_document" "pb05" {
+  count = local.enable_pb05 ? 1 : 0
+
+  statement {
+    sid       = "AppendToBlockLists"
+    actions   = ["wafv2:GetIPSet", "wafv2:UpdateIPSet"]
+    resources = var.block_ip_set_arns
   }
 }
 

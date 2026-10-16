@@ -108,10 +108,50 @@ def read_target_tags(clients: Callable[..., Any], kind: str, name: str) -> dict[
     raise SafetyError(f"unknown target kind {kind!r}")
 
 
+def read_ecs_task(clients: Callable[..., Any], task_arn: str) -> tuple[str, dict[str, str]]:
+    """Scenario D: the live task's cluster NAME and tags (read-only)."""
+    from sims.scenarios import cluster_arn_of
+
+    cluster_arn = cluster_arn_of(task_arn)
+    if cluster_arn is None:
+        raise SafetyError(f"{task_arn!r} is not a (new-format) ECS task ARN")
+    response = clients("ecs").describe_tasks(
+        cluster=cluster_arn, tasks=[task_arn], include=["TAGS"]
+    )
+    tasks = [t for t in response.get("tasks", []) if t.get("taskArn") == task_arn]
+    if len(tasks) != 1:
+        raise SafetyError(f"task {task_arn} not found in this account")
+    live_cluster = str(tasks[0].get("clusterArn", ""))
+    tags = {t["key"]: t["value"] for t in tasks[0].get("tags", [])}
+    return live_cluster.rsplit("/", 1)[-1], tags
+
+
+def assert_blockable_ip(value: str) -> None:
+    """Scenario E: the same address rules the guard applies (plan §4.2 rules
+    2-3), so the runner never even builds an event for a non-global address."""
+    from core.finding import ip_refusal, parse_single_ip
+
+    address = parse_single_ip(value)
+    if address is None:
+        raise SafetyError(f"{value!r} is not a single IP address")
+    refusal = ip_refusal(address)
+    if refusal is not None:
+        raise SafetyError(f"{value}: {refusal}")
+
+
 def verify_targets(ctx: LabContext, clients: Callable[..., Any], targets: dict[str, str]) -> None:
     """Rule 3, enforced before any mutating call: every named target must be
     in scope (read its live tags first). `targets` maps kind -> identifier."""
     for kind, name in targets.items():
+        if kind == "ip":
+            assert_blockable_ip(name)
+            continue
+        if kind == "ecs-task":
+            # The task id is opaque: the cluster carries the name prefix and
+            # the live task the scope tag.
+            cluster_name, tags = read_ecs_task(clients, name)
+            assert_in_scope(ctx, cluster_name, tags)
+            continue
         tags = read_target_tags(clients, kind, name)
         # Instance ids are not name-prefixed; buckets and users are.
         assert_in_scope(ctx, name, tags, require_prefix=(kind != "instance"))

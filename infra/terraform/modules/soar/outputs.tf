@@ -47,3 +47,22 @@ output "playbook_function_names" {
 output "evidence_bucket_arn" {
   value = aws_s3_bucket.evidence.arn
 }
+
+output "edge_event_bus_arn" {
+  description = "PB-05 dedicated edge bus (named publishers only). null without enable_pb05."
+  value       = one(aws_cloudwatch_event_bus.edge[*].arn)
+}
+
+output "edge_event_bus_name" {
+  description = "Phase E publishers put CloudShield edge events here (their role ARN must be in pb05_publisher_arns)."
+  value       = one(aws_cloudwatch_event_bus.edge[*].name)
+}
+
+output "pb05_never_block_parameter" {
+  description = "SSM parameter holding the CIDRs PB-05 never blocks. null without enable_pb05."
+  value       = one(aws_ssm_parameter.never_block[*].name)
+}
+
+output "pb05_harvester_function_name" {
+  value = one(aws_lambda_function.harvester[*].function_name)
+}

@@ -10,6 +10,11 @@ Modes:
   live-aws                perform the reversible attacker action; wait for the real
                           GuardDuty finding to drive the pipeline
   (cleanup is exposed per scenario; live modes always clean up in `finally`)
+
+Scenarios D (ECS) and E (edge IP) are replay-local fixtures only (D20): they
+refuse --target aws and live-aws, and refuse to run at all unless the SSM
+dry-run switch reads "true", so against a real account they can only ever
+produce WOULD_CONTAIN_DRY_RUN.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from typing import Any
 
 from core import aws
 from core.finding import parse_time
+from core.guard import read_dry_run
 from sims import scenarios
 from sims.safety import LabContext, SafetyError, require_lab, verify_targets
 
@@ -46,13 +52,19 @@ class SimResult:
         return {**self.__dict__}
 
 
-def _settings(name: str) -> Any:
+def _settings(name: str, account: str = "", region: str = "") -> Any:
     from core.config import Settings
 
     # Real infra ids (quarantine SG/NACL, revocable roles, tables) come from
     # the same environment the Lambdas receive, so a local replay drives the
-    # actual playbooks. Anything unset falls back to a name-based placeholder.
+    # actual playbooks. Anything unset falls back to a name-based placeholder
+    # that mirrors what Terraform sets (modules/soar, modules/compute).
     env = dict(os.environ)
+    if account and region:
+        env.setdefault("ECS_CLUSTER_ARN", f"arn:aws:ecs:{region}:{account}:cluster/{name}-cluster")
+        env.setdefault("ECS_SERVICE_NAMES", "docs-api")
+    env.setdefault("EDGE_EVENT_SOURCE", scenarios.EDGE_SOURCE)
+    env.setdefault("NEVER_BLOCK_PARAM", f"/{name}/soar/pb05_never_block")
     env.setdefault("DRY_RUN_PARAM", f"/{name}/soar/dry_run")
     env.setdefault("SCOPE_TAG_KEY", "cloudshield:soar-scope")
     env.setdefault("SCOPE_TAG_VALUE", "in-scope")
@@ -70,7 +82,7 @@ def replay_local(
     from sims.local_router import run_local
 
     event = scenarios.build_event(scenario, ctx.account_id, ctx.region, **targets)
-    settings = _settings(ctx.name_prefix.rstrip("-"))
+    settings = _settings(ctx.name_prefix.rstrip("-"), ctx.account_id, ctx.region)
     outcome = run_local(event, settings, clients)
     status = outcome.get("status", "UNKNOWN")
     passed = status in {"CONTAINED", "WOULD_CONTAIN_DRY_RUN"}
@@ -166,6 +178,8 @@ def _dispatch(args: argparse.Namespace, clients: Any = aws.client) -> SimResult:
         live=(args.mode == "live-aws"),
         confirm_account=args.confirm_live,
     )
+    if scenario.key in scenarios.DRY_RUN_ONLY:
+        _dry_run_only_gate(scenario, args, clients)
     # Rule 3 (audit A1): before ANY mutating call, read each named target's
     # live tags and refuse anything not in scope. role_id / access_key_id are
     # derived values, not taggable resources, so only the real resources below
@@ -176,6 +190,8 @@ def _dispatch(args: argparse.Namespace, clients: Any = aws.client) -> SimResult:
             ("instance", args.instance_id),
             ("user", args.user_name),
             ("bucket", args.bucket_name),
+            ("ecs-task", args.task_arn),
+            ("ip", args.ip),
         )
         if name is not None
     }
@@ -187,6 +203,9 @@ def _dispatch(args: argparse.Namespace, clients: Any = aws.client) -> SimResult:
         "user_name": args.user_name,
         "access_key_id": args.access_key_id,
         "bucket_name": args.bucket_name,
+        "task_arn": args.task_arn,
+        "service_name": args.service_name,
+        "ip": args.ip,
         "now": datetime.now(UTC),
     }
     targets = {k: v for k, v in targets.items() if v is not None}
@@ -198,6 +217,21 @@ def _dispatch(args: argparse.Namespace, clients: Any = aws.client) -> SimResult:
             raise SafetyError("--state-machine-arn is required for replay --target aws")
         return replay_aws(scenario, ctx, clients, args.state_machine_arn, **targets)
     raise SafetyError("live-aws mode is operator-run; see sims/README.md (not automated here)")
+
+
+def _dry_run_only_gate(
+    scenario: scenarios.Scenario, args: argparse.Namespace, clients: Any
+) -> None:
+    """D20: D/E never act. Replay-local only, with the dry-run switch on."""
+    if args.mode != "replay" or args.target != "local":
+        raise SafetyError(f"scenario {scenario.key} is replay --target local only (D20)")
+    if scenario.key == "e" and not args.ip:
+        raise SafetyError("scenario e needs --ip (there is no default)")
+    if scenario.key == "d" and not (args.task_arn and args.service_name):
+        raise SafetyError("scenario d needs --task-arn and --service-name")
+    parameter = _settings(args.name).dry_run_param
+    if read_dry_run(clients("ssm"), parameter) is not True:
+        raise SafetyError(f"scenario {scenario.key} runs only while {parameter} reads 'true' (D20)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -220,6 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--user-name")
     p.add_argument("--access-key-id")
     p.add_argument("--bucket-name")
+    p.add_argument("--task-arn", help="scenario d: the ECS task (new 32-hex ARN format)")
+    p.add_argument("--service-name", help="scenario d: the task's ECS service")
+    p.add_argument("--ip", help="scenario e: the client IP (required, no default)")
     p.add_argument("--output", help="write the JSON result here")
     return p
 

@@ -33,6 +33,10 @@ locals {
   # not null, while the NLB is being created — F4).
   enable_api = var.enable_edge && var.container_image != null
 
+  # PB-04 (plan "Dev wiring"): the ECS service must exist, Runtime Monitoring
+  # must produce the findings, and the service must opt in to the scope tag.
+  enable_pb04 = var.container_image != null && var.guardduty_runtime_monitoring && var.soar_scope_app_service
+
   # GuardDuty Runtime Monitoring Fargate agent repository (F20), from the
   # GuardDuty user guide ("ECR Repository for GuardDuty agent on AWS Fargate").
   # Single region by design (plan §1.2): add the region here before moving.
@@ -165,11 +169,24 @@ module "soar" {
   # Config NON_COMPLIANT notifications from module.detection (by name: no cycle).
   extra_notify_rule_names = var.enable_config ? ["${local.name}-soar-config-noncompliant"] : []
 
-  # Phase D stage 2b: PB-04 / PB-05 / notifier inputs are wired here —
-  #   enable_pb04 = var.container_image != null && var.guardduty_runtime_monitoring && var.soar_scope_app_service
-  #   ecs_cluster_name / ecs_cluster_arn / ecs_service_names from module.compute
-  #   enable_pb05 = var.enable_edge; block_ip_set_arns, waf_web_acl and
-  #   waf_rate_rule_name from module.edge[0]; nat_public_ip from module.network
+  # Phase D stage 2b. Plan-time bools only (D6); edge never consumes soar
+  # outputs, so reading module.edge[0] here is cycle-free.
+  # PB-04: needs the app service, GuardDuty Runtime Monitoring (paid, off by
+  # default, F20) and the opt-in scope tag on the service.
+  enable_pb04       = local.enable_pb04
+  ecs_cluster_name  = module.compute.ecs_cluster_name
+  ecs_cluster_arn   = module.compute.ecs_cluster_arn
+  ecs_service_names = local.enable_pb04 ? [module.compute.ecs_service_name] : []
+
+  # PB-05: on with the edge. The WAF lives in this (us-east-1) region (F17
+  # fallback), so the soar module's own us-east-1 precondition applies too.
+  enable_pb05        = var.enable_edge
+  block_ip_set_arns  = var.enable_edge ? values(module.edge[0].block_ip_set_arns) : []
+  waf_web_acl        = var.enable_edge ? module.edge[0].cloudfront_web_acl : null
+  waf_rate_rule_name = var.enable_edge ? module.edge[0].rate_rule_name : "RateLimitPerIp"
+  nat_public_ip      = module.network.nat_public_ip
+
+  # Phase D stage 2c: notifier inputs (chatops_webhook_param_name) go here.
 }
 
 module "detection" {

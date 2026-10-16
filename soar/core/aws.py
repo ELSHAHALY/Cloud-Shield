@@ -28,5 +28,10 @@ def client(service: str, config: Config | None = None) -> Any:
     return boto3.client(service, config=config or _CONFIG)
 
 
+def in_region(region: str) -> Config:
+    """The default budget, pinned to a region (PB-05: WAF_REGION)."""
+    return _CONFIG.merge(Config(region_name=region))
+
+
 def error_code(exc: ClientError) -> str:
     return str(exc.response.get("Error", {}).get("Code", ""))

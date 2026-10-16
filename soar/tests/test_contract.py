@@ -15,11 +15,24 @@ from core.config import ConfigError, Settings
 
 SOAR = Path(__file__).resolve().parent.parent
 REPO = SOAR.parent
-PLAYBOOKS_TF = REPO / "infra" / "terraform" / "modules" / "soar" / "playbooks.tf"
+SOAR_TF = REPO / "infra" / "terraform" / "modules" / "soar"
+PLAYBOOKS_TF = SOAR_TF / "playbooks.tf"
+EDGE_BUS_TF = SOAR_TF / "edge-bus.tf"
 
 
 def tf_handlers() -> list[str]:
-    return re.findall(r'handler\s*=\s*"([^"]+)"', PLAYBOOKS_TF.read_text(encoding="utf-8"))
+    return [
+        handler
+        for tf in (PLAYBOOKS_TF, EDGE_BUS_TF)
+        for handler in re.findall(r'handler\s*=\s*"([^"]+)"', tf.read_text(encoding="utf-8"))
+    ]
+
+
+def harvester_env_vars() -> set[str]:
+    text = EDGE_BUS_TF.read_text(encoding="utf-8")
+    block = re.search(r"variables = \{\n(.*?)^\s*\}\s*$", text, flags=re.MULTILINE | re.DOTALL)
+    assert block, "harvester environment block not found"
+    return set(re.findall(r"^\s*([A-Z_]+)\s*=", block.group(1), flags=re.MULTILINE))
 
 
 def tf_env_vars() -> set[str]:
@@ -33,7 +46,11 @@ def tf_env_vars() -> set[str]:
 
 def test_every_terraform_handler_resolves() -> None:
     handlers = tf_handlers()
-    assert len(handlers) == 4
+    # safety guard, PB-01..PB-05, and the PB-05 harvester (stage 2c adds the notifier)
+    assert len(handlers) == 7
+    assert "playbooks.pb04_ecs_task_contain.lambda_handler" in handlers
+    assert "playbooks.pb05_waf_ip_block.lambda_handler" in handlers
+    assert "playbooks.pb05_waf_ip_block.harvest_handler" in handlers
     for handler in handlers:
         module, function = handler.rsplit(".", 1)
         assert callable(getattr(importlib.import_module(module), function)), handler
@@ -51,9 +68,41 @@ def test_settings_reads_every_variable_terraform_sets() -> None:
         "QUARANTINE_NACL_RULE",
         "REVOCABLE_ROLE_ARNS",
         "BUCKET_NAME_PREFIX",
+        "ECS_CLUSTER_ARN",
+        "ECS_SERVICE_NAMES",
+        "BLOCK_IP_SET_ARNS",
+        "BLOCK_IP_SET_MAX",
+        "BLOCK_TTL_HOURS",
+        "WAF_REGION",
+        "NEVER_BLOCK_PARAM",
+        "EDGE_EVENT_SOURCE",
     }
     # SCOPE_TAG_PARAM is set for operators; the code reads the same tag from env.
     assert tf_env_vars() - {"SCOPE_TAG_PARAM"} == read_by_code
+
+
+def test_harvester_reads_every_variable_terraform_sets() -> None:
+    from playbooks.pb05_waf_ip_block import HarvestSettings
+
+    read_by_code = {
+        "EDGE_BUS_NAME",
+        "EDGE_EVENT_SOURCE",
+        "WAF_WEB_ACL_NAME",
+        "WAF_WEB_ACL_ID",
+        "WAF_RATE_RULE_NAME",
+        "WAF_SCOPE",
+        "WAF_REGION",
+    }
+    assert harvester_env_vars() == read_by_code
+    settings = HarvestSettings.from_env(dict.fromkeys(read_by_code, "CLOUDFRONT"))
+    assert settings.scope == "CLOUDFRONT"
+
+
+def test_edge_event_source_matches_the_finding_parser() -> None:
+    from core.finding import EDGE_SOURCE
+
+    main_tf = (SOAR_TF / "main.tf").read_text(encoding="utf-8")
+    assert f'edge_event_source = "{EDGE_SOURCE}"' in main_tf
 
 
 BASE_ENV = {
@@ -74,6 +123,35 @@ def test_settings_defaults_and_lists() -> None:
     assert settings.quarantine_nacl_ids == ("acl-1", "acl-2")
     assert settings.revocable_role_arns == ()
     assert settings.quarantine_nacl_rule == 10
+    # Phase D settings are optional: empty means the feature is off.
+    assert settings.ecs_cluster_arn == ""
+    assert settings.ecs_service_names == ()
+    assert settings.block_ip_set_arns == ()
+    assert settings.block_ip_set_max == 1000
+    assert settings.block_ttl_hours == 24
+    assert settings.waf_region == ""
+    assert settings.never_block_param == ""
+    assert settings.edge_event_source == ""
+
+
+def test_settings_phase_d_values() -> None:
+    settings = Settings.from_env(
+        {
+            **BASE_ENV,
+            "ECS_CLUSTER_ARN": " arn:aws:ecs:us-east-1:123456789012:cluster/c ",
+            "ECS_SERVICE_NAMES": "docs-api, other",
+            "BLOCK_IP_SET_ARNS": "a,b",
+            "BLOCK_IP_SET_MAX": "10000",
+            "BLOCK_TTL_HOURS": "168",
+            "WAF_REGION": "us-east-1",
+            "NEVER_BLOCK_PARAM": "/p/nb",
+            "EDGE_EVENT_SOURCE": "cloudshield.edge",
+        }
+    )
+    assert settings.ecs_cluster_arn == "arn:aws:ecs:us-east-1:123456789012:cluster/c"
+    assert settings.ecs_service_names == ("docs-api", "other")
+    assert settings.block_ip_set_arns == ("a", "b")
+    assert (settings.block_ip_set_max, settings.block_ttl_hours) == (10000, 168)
 
 
 @pytest.mark.parametrize(
@@ -85,6 +163,10 @@ def test_settings_defaults_and_lists() -> None:
         {"QUARANTINE_NACL_RULE": "0"},
         {"QUARANTINE_NACL_RULE": "-5"},
         {"QUARANTINE_NACL_RULE": "ten"},
+        {"BLOCK_IP_SET_MAX": "0"},
+        {"BLOCK_IP_SET_MAX": "10001"},
+        {"BLOCK_TTL_HOURS": "169"},
+        {"BLOCK_TTL_HOURS": "1.5"},
     ],
 )
 def test_settings_rejects_bad_env(change: dict[str, str]) -> None:

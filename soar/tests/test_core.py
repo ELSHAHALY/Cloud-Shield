@@ -170,3 +170,23 @@ def test_add_evidence_keeps_the_first_hash(world: Any) -> None:
     row = repo.get("f-2")
     assert row["evidenceSha256"] == "first"
     assert [r["key"] for r in row["evidenceRecords"]] == ["a", "b"]
+
+
+def test_in_region_keeps_the_time_budget() -> None:
+    from core import aws
+
+    config = aws.in_region("us-east-1")
+    assert config.region_name == "us-east-1"
+    assert config.connect_timeout == 2
+    assert config.read_timeout == 5
+    assert aws.client("wafv2", config=aws.in_region("eu-west-1")).meta.region_name == "eu-west-1"
+
+
+def test_playbooks_may_record_block_fields_but_not_router_fields(world: Any) -> None:
+    # PB-05 writes blockedCidr / ipSetArn / blockExpiresAt; never status or containedAt.
+    repo = IncidentRepository(INCIDENTS_TABLE, boto3.client("dynamodb"))
+    world.seed_incident("f-3")
+    repo.set_fields("f-3", {"blockedCidr": "1.1.1.1/32", "blockExpiresAt": "2026-10-15T10:00:00Z"})
+    assert repo.get("f-3")["blockedCidr"] == "1.1.1.1/32"
+    with pytest.raises(ValueError, match="router-owned"):
+        repo.set_fields("f-3", {"blockedCidr": "1.1.1.1/32", "status": "CONTAINED"})

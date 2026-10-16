@@ -111,6 +111,79 @@ def public_bucket(bucket_name: str, **kw: Any) -> dict[str, Any]:
     )
 
 
+CLUSTER_NAME = "cs-dev-cluster"
+CLUSTER_ARN = f"arn:aws:ecs:us-east-1:{ACCOUNT}:cluster/{CLUSTER_NAME}"
+SERVICE_NAME = "docs-api"
+TASK_ID = "0123456789abcdef0123456789abcdef"
+TASK_ARN = f"arn:aws:ecs:us-east-1:{ACCOUNT}:task/{CLUSTER_NAME}/{TASK_ID}"
+DEPLOYMENT_ID = "ecs-svc/1111111111111111111"
+
+
+def ecs_runtime(
+    task_arn: str = TASK_ARN,
+    cluster_arn: str = CLUSTER_ARN,
+    group: str | None = f"service:{SERVICE_NAME}",
+    **kw: Any,
+) -> dict[str, Any]:
+    """GuardDuty Runtime Monitoring finding on a Fargate task (F19)."""
+    task: dict[str, Any] = {
+        "arn": task_arn,
+        "definitionArn": f"arn:aws:ecs:us-east-1:{ACCOUNT}:task-definition/cs-dev-app:3",
+        "startedBy": DEPLOYMENT_ID,
+        "launchType": "FARGATE",
+        "containers": [{"name": "docs-api", "image": "app@sha256:" + "a" * 64}],
+        # Finding-embedded tags: the guard must NEVER trust these.
+        "tags": kw.pop("task_tags", [{"key": "cloudshield:soar-scope", "value": "in-scope"}]),
+    }
+    if group is not None:
+        task["group"] = group
+    return _event(
+        kw.pop("finding_type", "Execution:Runtime/NewBinaryExecuted"),
+        8.0,
+        {
+            "resourceType": "ECSCluster",
+            "ecsClusterDetails": {
+                "arn": cluster_arn,
+                "name": cluster_arn.rsplit("/", 1)[-1],
+                "taskDetails": task,
+            },
+        },
+        kw.pop("finding_id", "f-pb04-task"),
+        **kw,
+    )
+
+
+def edge_ip(
+    address: str = "1.1.1.1",
+    *,
+    field: str | None = None,
+    source: str = "cloudshield.edge",
+    time: str = EVENT_TIME,
+    **kw: Any,
+) -> dict[str, Any]:
+    """A custom edge event (plan §4.2 contract) as the dedicated bus delivers it."""
+    field = field or ("ipAddressV6" if ":" in address else "ipAddressV4")
+    event = _event(
+        "CloudShield:IPAddress/WafRateLimitExceeded",
+        5.0,
+        {"resourceType": "IPAddress", "ipAddressDetails": {field: address}},
+        kw.pop("finding_id", "edge-waf-rate-1-1-1-1-2026101410"),
+        **kw,
+    )
+    event["source"] = source
+    event["detail-type"] = "CloudShield Edge Finding"
+    event["time"] = time
+    event["detail"]["service"] = {
+        "serviceName": "cloudshield",
+        "additionalInfo": {
+            "sample": kw.get("sample", False),
+            "publisher": "waf-rate-harvester",
+            "webAcl": "cs-dev-cloudfront",
+        },
+    }
+    return event
+
+
 def router_state(
     event: dict[str, Any], *, allowed: bool = True, dry_run: Any = False
 ) -> dict[str, Any]:
