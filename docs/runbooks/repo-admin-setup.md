@@ -53,7 +53,28 @@ gh variable set AWS_ECR_PUSH_ROLE_ARN --repo "$REPO" --body "$(terraform output 
 gh variable set ECR_REPOSITORY        --repo "$REPO" --body "$(terraform output -raw ecr_repository_url)"
 ```
 
-CI only pushes, on `main`, an image whose Trivy scan passed; it never deploys. Deploying stays a local apply with `container_image` set to the digest shown in the job summary.
+CI only pushes, on `main`, an image that passed **every** gate: the push step requires this job's Trivy image scan **and** the secrets, SAST and SCA scans to have really succeeded (each gate job exports its scan step's outcome, so a fail-open finding still blocks the push). It never deploys. Deploying stays a local apply with `container_image` set to the digest shown in the job summary.
+
+### 2b. Optional (S1): bind the OIDC subject to the workflow file
+
+Today the ECR push role trusts `sub = repo:ELSHAHALY/Cloud-Shield:ref:refs/heads/main` exactly. Any workflow file on `main` can mint that token, not just `ci.yml`. GitHub can add the calling workflow to the subject claim:
+
+```bash
+gh api -X PUT "repos/$REPO/actions/oidc/customization/sub" \
+  --input - <<'JSON'
+{ "use_default": false, "include_claim_keys": ["repo", "context", "job_workflow_ref"] }
+JSON
+gh api "repos/$REPO/actions/oidc/customization/sub"   # check
+```
+
+After that the push token's subject becomes `repo:ELSHAHALY/Cloud-Shield:ref:refs/heads/main:job_workflow_ref:ELSHAHALY/Cloud-Shield/.github/workflows/ci.yml@refs/heads/main` [inferred from GitHub's OIDC docs: check the `sub` of one real token before relying on it].
+
+**Do not run this on its own.** The customization applies to every token the repository mints, so in the same change:
+
+- the ECR push role's `sub` (`modules/compute/ci-push.tf`, `local.ci_push_subject`) must become the new value, and
+- the plan role's `sub` patterns (`bootstrap/main.tf`: `...:pull_request` and `...:ref:refs/heads/main`) must be rewritten to the new format,
+
+otherwise both roles stop being assumable. The trust policies stay in the current shape until this step is actually applied; it is a tracked follow-up (audit A9), not done in Phase D. Undo with `{"use_default": true}`.
 
 ## 3. Branch protection on `main`
 

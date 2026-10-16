@@ -45,6 +45,10 @@ jobs:
     name: "gate: secrets (gitleaks)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The scan's REAL outcome ('success' / 'failure'), even in fail-open mode
+    # where the job itself stays green. The image push requires 'success'.
+    outputs:
+      scan: ${{ steps.scan.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,6 +80,8 @@ jobs:
     name: "gate: sast (semgrep)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      scan: ${{ steps.scan.outcome }}   # real outcome; see the secrets job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +116,8 @@ jobs:
     name: "gate: sca (trivy fs)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      scan: ${{ steps.scan.outcome }}   # real outcome; see the secrets job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -300,17 +308,22 @@ jobs:
           echo "### ⚠️ Image gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
 
       # Push (decision D7, F13/F14): only on a push to main, only once the push
-      # role exists (vars.AWS_ECR_PUSH_ROLE_ARN), and only when the Trivy scan
-      # PASSED. steps.scan.outcome is 'failure' whenever findings exist, even
-      # in fail-open mode (continue-on-error only keeps the job green), so a
-      # failed or skipped scan can never be pushed. The SAME local image that
-      # was scanned is pushed; ECR is IMMUTABLE, so an existing tag is left
-      # alone. CI pushes only: deploying (by digest) stays a local S1 apply.
+      # role exists (vars.AWS_ECR_PUSH_ROLE_ARN), and only when EVERY gate
+      # really passed (audit A9): this job's Trivy scan AND the secrets, SAST
+      # and SCA scans (their jobs export the scan step's outcome). A step's
+      # outcome is 'failure' whenever findings exist, even in fail-open mode
+      # (continue-on-error only keeps the job green), so a failed or skipped
+      # scan can never be pushed. The SAME local image that was scanned is
+      # pushed; ECR is IMMUTABLE, so an existing tag is left alone. CI pushes
+      # only: deploying (by digest) stays a local S1 apply.
       - name: Configure AWS credentials (ECR push role, main only)
         if: >-
           github.event_name == 'push' && github.ref == 'refs/heads/main' &&
           vars.AWS_ECR_PUSH_ROLE_ARN != '' &&
-          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success'
+          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
+          needs.secrets.outputs.scan == 'success' &&
+          needs.sast.outputs.scan == 'success' &&
+          needs.sca.outputs.scan == 'success'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
@@ -321,7 +334,10 @@ jobs:
         if: >-
           github.event_name == 'push' && github.ref == 'refs/heads/main' &&
           vars.AWS_ECR_PUSH_ROLE_ARN != '' &&
-          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success'
+          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
+          needs.secrets.outputs.scan == 'success' &&
+          needs.sast.outputs.scan == 'success' &&
+          needs.sca.outputs.scan == 'success'
         env:
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
