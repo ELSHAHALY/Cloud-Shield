@@ -5,6 +5,7 @@
 # to the Security account unchanged — only the provider alias differs.
 #
 # Owner: S3 (SecOps). S1 consumes it for VPC Flow Logs.
+# waf-logs.tf adds the separate aws-waf-logs-* bucket WAF requires (F1, D8).
 # Grants write access, each only under its own prefix and scoped to this
 # account: VPC Flow Logs (vpc-flow-logs/) and, when modules/detection enables
 # them, CloudTrail (cloudtrail/), AWS Config (config/) and GuardDuty findings
@@ -44,10 +45,11 @@ data "aws_iam_policy_document" "kms" {
     }
   }
 
-  # Required for VPC Flow Logs -> S3 with SSE-KMS. Without this statement the
-  # flow log is created "successfully" but delivers nothing (silent failure).
+  # Required for VPC Flow Logs and WAF logs (waf-logs.tf) -> S3 with SSE-KMS:
+  # both deliver through delivery.logs.amazonaws.com. Without this statement
+  # the log is configured "successfully" but delivers nothing (silent failure).
   statement {
-    sid = "AllowVpcFlowLogDelivery"
+    sid = "AllowLogDelivery"
     actions = [
       "kms:Encrypt",
       "kms:Decrypt",

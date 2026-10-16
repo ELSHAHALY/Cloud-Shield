@@ -3,7 +3,7 @@
 #
 #   API Gateway (REST) --VPC Link (PrivateLink)--> internal NLB --> Fargate
 #
-# The VPC Link itself belongs to the future `edge` module (TB1); it consumes
+# The VPC Link itself belongs to the `edge` module (TB1); it consumes
 # output.nlb_arn.
 ###############################################################################
 
@@ -88,10 +88,13 @@ resource "aws_ecs_task_definition" "app" {
 
   container_definitions = jsonencode([
     {
-      name                   = "docs-api"
-      image                  = var.container_image
-      essential              = true
-      user                   = var.container_user
+      name      = "docs-api"
+      image     = var.container_image
+      essential = true
+      user      = var.container_user
+      # SIGTERM -> SIGKILL after 2 s (default 30 s) so a PB-04 StopTask kills
+      # the processes well inside the 60 s MTTC (F21).
+      stopTimeout            = 2
       readonlyRootFilesystem = true
       privileged             = false
 
@@ -136,7 +139,8 @@ resource "aws_ecs_service" "app" {
   launch_type                       = "FARGATE"
   platform_version                  = "LATEST"
   enable_execute_command            = true
-  propagate_tags                    = "SERVICE"
+  enable_ecs_managed_tags           = true
+  propagate_tags                    = "SERVICE" # copies the scope tag (below) onto every task
   health_check_grace_period_seconds = 60
 
   deployment_circuit_breaker {
@@ -157,5 +161,7 @@ resource "aws_ecs_service" "app" {
   }
 
   depends_on = [aws_lb_listener.app]
-  tags       = var.tags
+  # In scope for PB-04 only when explicitly opted in (the guard reads the
+  # LIVE task tags, which propagate_tags copies from here).
+  tags = merge(var.tags, var.soar_scope_app_service ? var.soar_scope_tag : {})
 }

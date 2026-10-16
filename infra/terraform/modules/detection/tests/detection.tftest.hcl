@@ -158,9 +158,69 @@ run "catalog_and_saved_queries" {
     error_message = "Flow-log columns must follow modules/network flow_log_format, in order."
   }
   assert {
-    condition     = length(aws_athena_named_query.hunt) == length(fileset("${path.module}/../../../../detection/athena-queries", "*.sql")) && length(aws_athena_named_query.hunt) >= 3
-    error_message = "Every detection/athena-queries/*.sql must be a saved query (FR-8)."
+    condition     = length(aws_athena_named_query.hunt) == length(fileset("${path.module}/../../../../detection/athena-queries", "*.sql")) && length(aws_athena_named_query.hunt) >= 4
+    error_message = "Every detection/athena-queries/*.sql must be a saved query (FR-8), including query 04."
   }
+  assert {
+    condition     = contains(keys(aws_athena_named_query.hunt), "04_waf_blocked_requests_by_client.sql")
+    error_message = "The WAF hunt query (04) must be catalogued."
+  }
+  assert {
+    condition     = length(aws_glue_catalog_table.waf_logs) == 0
+    error_message = "The waf_logs table exists only with enable_waf_logs."
+  }
+}
+
+run "waf_logs_table_matches_the_waf_s3_layout" {
+  command = apply
+
+  variables {
+    enable_waf_logs     = true
+    waf_log_bucket_name = "aws-waf-logs-cs-test-123456789012"
+    waf_web_acl_names   = ["cs-test-cloudfront", "cs-test-api"]
+  }
+
+  assert {
+    condition     = aws_glue_catalog_table.waf_logs[0].parameters["storage.location.template"] == "s3://aws-waf-logs-cs-test-123456789012/AWSLogs/123456789012/WAFLogs/$${waf_region}/$${webacl}/$${log_time}"
+    error_message = "Template must follow AWSLogs/<acct>/WAFLogs/<region>/<web-acl>/<yyyy/MM/dd/HH/mm>."
+  }
+  assert {
+    condition = (
+      aws_glue_catalog_table.waf_logs[0].parameters["projection.log_time.type"] == "date" &&
+      aws_glue_catalog_table.waf_logs[0].parameters["projection.log_time.format"] == "yyyy/MM/dd/HH/mm" &&
+      aws_glue_catalog_table.waf_logs[0].parameters["projection.log_time.interval"] == "1" &&
+      aws_glue_catalog_table.waf_logs[0].parameters["projection.log_time.interval.unit"] == "MINUTES" &&
+      aws_glue_catalog_table.waf_logs[0].parameters["projection.log_time.range"] == "2026/10/01/00/00,NOW"
+    )
+    error_message = "log_time: date projection, yyyy/MM/dd/HH/mm, 1-minute interval, from the start date to NOW."
+  }
+  assert {
+    condition     = aws_glue_catalog_table.waf_logs[0].parameters["projection.waf_region.values"] == "cloudfront,us-east-1" && aws_glue_catalog_table.waf_logs[0].parameters["projection.webacl.values"] == "cs-test-cloudfront,cs-test-api"
+    error_message = "waf_region enum = cloudfront + this region; webacl enum = the given ACL names."
+  }
+  assert {
+    condition     = [for k in aws_glue_catalog_table.waf_logs[0].partition_keys : k.name] == ["waf_region", "webacl", "log_time"]
+    error_message = "Partition keys: waf_region, webacl, log_time (in template order)."
+  }
+  assert {
+    condition     = aws_glue_catalog_table.waf_logs[0].storage_descriptor[0].ser_de_info[0].serialization_library == "org.openx.data.jsonserde.JsonSerDe"
+    error_message = "WAF logs use the OpenX JSON SerDe."
+  }
+  assert {
+    condition     = [for c in aws_glue_catalog_table.waf_logs[0].storage_descriptor[0].columns : c.name] == ["timestamp", "formatversion", "webaclid", "terminatingruleid", "terminatingruletype", "action", "terminatingrulematchdetails", "httpsourcename", "httpsourceid", "rulegrouplist", "ratebasedrulelist", "nonterminatingmatchingrules", "requestheadersinserted", "responsecodesent", "httprequest", "labels", "captcharesponse", "challengeresponse", "ja3fingerprint", "ja4fingerprint", "oversizefields", "requestbodysize", "requestbodysizeinspectedbywaf"]
+    error_message = "Columns must follow the AWS WAF partition-projection DDL, in order."
+  }
+}
+
+run "rejects_waf_table_without_waf_bucket" {
+  command = plan
+
+  variables {
+    enable_waf_logs     = true
+    waf_log_bucket_name = "cs-test-log-archive-123456789012-us-east-1"
+  }
+
+  expect_failures = [var.waf_log_bucket_name]
 }
 
 run "security_hub_standards_when_enabled" {

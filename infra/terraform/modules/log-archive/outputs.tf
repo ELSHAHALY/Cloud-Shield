@@ -20,3 +20,15 @@ output "flow_logs_destination_arn" {
   value       = "${aws_s3_bucket.this.arn}/vpc-flow-logs/"
   depends_on  = [aws_s3_bucket_policy.this, aws_kms_key.this]
 }
+
+# WAF log bucket (waf-logs.tf). null while enable_waf_logs = false.
+output "waf_log_bucket_name" {
+  value      = one(aws_s3_bucket.waf[*].bucket)
+  depends_on = [aws_s3_bucket_policy.waf, aws_kms_key.this]
+}
+
+output "waf_log_bucket_arn" {
+  description = "modules/edge waf_log_bucket_arn (both logging configurations)."
+  value       = one(aws_s3_bucket.waf[*].arn)
+  depends_on  = [aws_s3_bucket_policy.waf, aws_kms_key.this]
+}

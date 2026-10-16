@@ -148,6 +148,35 @@ variable "projection_start_date" {
   }
 }
 
+# --- WAF logs (modules/log-archive waf-logs.tf, modules/edge) -----------------
+variable "enable_waf_logs" {
+  description = "Create the waf_logs Glue table. A plan-time bool (the bucket name comes from another module's resource)."
+  type        = bool
+  default     = false
+}
+
+variable "waf_log_bucket_name" {
+  description = "modules/log-archive waf_log_bucket_name (aws-waf-logs-*). Required with enable_waf_logs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_waf_logs || startswith(coalesce(var.waf_log_bucket_name, "-"), "aws-waf-logs-")
+    error_message = "With enable_waf_logs, waf_log_bucket_name must be the aws-waf-logs-* bucket."
+  }
+}
+
+variable "waf_web_acl_names" {
+  description = "Web ACL names that log to the WAF bucket (modules/edge web_acl_names): the webacl partition enum."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for n in var.waf_web_acl_names : can(regex("^[A-Za-z0-9_-]{1,128}$", n))])
+    error_message = "Web ACL names: letters, digits, '-' and '_' (1-128)."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

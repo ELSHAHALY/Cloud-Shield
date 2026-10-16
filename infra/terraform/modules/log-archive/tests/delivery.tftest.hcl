@@ -57,6 +57,28 @@ override_resource {
 override_resource {
   target = aws_s3_bucket_policy.this
 }
+override_resource {
+  target = aws_s3_bucket.waf
+  values = { arn = "arn:aws:s3:::aws-waf-logs-cs-test-123456789012", bucket = "aws-waf-logs-cs-test-123456789012" }
+}
+override_resource {
+  target = aws_s3_bucket_versioning.waf
+}
+override_resource {
+  target = aws_s3_bucket_server_side_encryption_configuration.waf
+}
+override_resource {
+  target = aws_s3_bucket_public_access_block.waf
+}
+override_resource {
+  target = aws_s3_bucket_ownership_controls.waf
+}
+override_resource {
+  target = aws_s3_bucket_lifecycle_configuration.waf
+}
+override_resource {
+  target = aws_s3_bucket_policy.waf
+}
 
 variables {
   name = "cs-test"
@@ -70,6 +92,56 @@ run "flow_logs_only_by_default" {
       "DenyInsecureTransport", "AWSLogDeliveryAclCheck", "AWSLogDeliveryWrite",
     ])
     error_message = "Without detection, only VPC Flow Logs may deliver."
+  }
+  assert {
+    condition     = length(aws_s3_bucket.waf) == 0 && output.waf_log_bucket_arn == null
+    error_message = "The WAF log bucket is off by default."
+  }
+}
+
+run "waf_logs_write_only_under_this_accounts_prefix" {
+  command = apply
+
+  variables {
+    enable_waf_logs = true
+  }
+
+  assert {
+    condition     = startswith(aws_s3_bucket.waf[0].bucket, "aws-waf-logs-") && aws_s3_bucket.waf[0].bucket == "aws-waf-logs-cs-test-123456789012"
+    error_message = "WAF only logs to buckets named aws-waf-logs-* (F1)."
+  }
+  assert {
+    condition = { for s in jsondecode(data.aws_iam_policy_document.waf_bucket[0].json).Statement : s.Sid => s.Resource if s.Action == "s3:PutObject" } == {
+      AWSLogDeliveryWrite = "arn:aws:s3:::aws-waf-logs-cs-test-123456789012/AWSLogs/123456789012/*"
+    }
+    error_message = "Log delivery may write only under AWSLogs/<this account>/."
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(data.aws_iam_policy_document.waf_bucket[0].json).Statement :
+      s.Condition.StringEquals["aws:SourceAccount"] == "123456789012" && s.Condition.ArnLike["aws:SourceArn"] == "arn:aws:logs:us-east-1:123456789012:*"
+      if s.Effect == "Allow"
+    ])
+    error_message = "Every delivery statement must carry SourceAccount + SourceArn (confused deputy)."
+  }
+  assert {
+    condition = one([
+      for s in jsondecode(data.aws_iam_policy_document.waf_bucket[0].json).Statement : s
+      if s.Sid == "AWSLogDeliveryWrite"
+    ]).Condition.StringEquals["s3:x-amz-acl"] == "bucket-owner-full-control"
+    error_message = "Writes must grant the bucket owner full control."
+  }
+  assert {
+    condition     = toset([for s in jsondecode(data.aws_iam_policy_document.waf_bucket[0].json).Statement : s.Sid]) == toset(["DenyInsecureTransport", "AWSLogDeliveryAclCheck", "AWSLogDeliveryWrite"])
+    error_message = "WAF bucket policy: TLS deny + the two documented delivery statements only."
+  }
+  assert {
+    condition     = contains([for s in jsondecode(data.aws_iam_policy_document.kms_delivery.json).Statement : s.Sid], "AllowLogDelivery")
+    error_message = "The archive key must let log delivery encrypt WAF logs."
+  }
+  assert {
+    condition     = output.waf_log_bucket_arn == "arn:aws:s3:::aws-waf-logs-cs-test-123456789012"
+    error_message = "The bucket ARN is output for modules/edge."
   }
 }
 

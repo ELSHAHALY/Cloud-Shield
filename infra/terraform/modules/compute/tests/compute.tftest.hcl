@@ -95,6 +95,14 @@ run "defaults_create_no_code_dependent_resources" {
     condition     = aws_ecr_repository.app.image_scanning_configuration[0].scan_on_push
     error_message = "ECR must scan on push."
   }
+  assert {
+    condition     = output.ecr_push_role_arn == null && length(aws_iam_role.ci_push) == 0
+    error_message = "No CI push role without the bootstrap OIDC provider ARN."
+  }
+  assert {
+    condition     = one([for s in data.aws_iam_policy_document.execution.statement : s.resources if s.sid == "PullThisRepoOnly"]) == toset(["arn:aws:ecr:us-east-1:123456789012:repository/mock"])
+    error_message = "Without GuardDuty agent ARNs the execution role pulls from this repository only."
+  }
 }
 
 run "service_hardening" {
@@ -120,6 +128,58 @@ run "service_hardening" {
     condition     = aws_ecs_service.app[0].network_configuration[0].assign_public_ip == false
     error_message = "Tasks must not get public IPs."
   }
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.app[0].container_definitions)[0].stopTimeout == 2
+    error_message = "stopTimeout must be 2 s so PB-04's StopTask kills the processes inside the MTTC (F21)."
+  }
+  assert {
+    condition     = !contains(keys(aws_ecs_service.app[0].tags), "cloudshield:soar-scope")
+    error_message = "The app service must not be in SOAR scope by default."
+  }
+  assert {
+    condition     = aws_ecs_service.app[0].enable_ecs_managed_tags && aws_ecs_service.app[0].propagate_tags == "SERVICE"
+    error_message = "Service tags must propagate to tasks (the guard reads live task tags)."
+  }
+}
+
+run "service_in_scope_only_when_opted_in" {
+  command = apply
+
+  variables {
+    container_image        = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    soar_scope_app_service = true
+  }
+
+  assert {
+    condition     = aws_ecs_service.app[0].tags["cloudshield:soar-scope"] == "in-scope"
+    error_message = "soar_scope_app_service must put the scope tag on the service (PB-04 target)."
+  }
+}
+
+run "guardduty_agent_repository_appended_only_when_given" {
+  command = apply
+
+  variables {
+    guardduty_agent_ecr_repository_arns = ["arn:aws:ecr:us-east-1:593207742271:repository/aws-guardduty-agent-fargate"]
+  }
+
+  assert {
+    condition = one([for s in data.aws_iam_policy_document.execution.statement : s.resources if s.sid == "PullThisRepoOnly"]) == toset([
+      "arn:aws:ecr:us-east-1:123456789012:repository/mock",
+      "arn:aws:ecr:us-east-1:593207742271:repository/aws-guardduty-agent-fargate",
+    ])
+    error_message = "The GuardDuty agent repository is added to the pull statement (F20)."
+  }
+}
+
+run "rejects_non_agent_repository" {
+  command = plan
+
+  variables {
+    guardduty_agent_ecr_repository_arns = ["arn:aws:ecr:us-east-1:123456789012:repository/anything"]
+  }
+
+  expect_failures = [var.guardduty_agent_ecr_repository_arns]
 }
 
 run "rejects_tag_pinned_image" {
