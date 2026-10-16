@@ -1,0 +1,267 @@
+{
+  "schemaVersion": "1",
+  "description": "Chain-of-custody golden cases. Asserted by pytest (soar/tests/test_ir_golden.py, tools/generate_ir_report.build_report) and Jest (app/docs-api soc tests): evidence[], chain_of_custody_ok and mttc_seconds must be identical. Object bodies are UTF-8 text; records[].version is an index into the object's versions (null = no VersionId); expected '$version:N' is that version's id.",
+  "evidenceBucket": "cs-dev-soar-evidence-123456789012",
+  "cases": [
+    {
+      "name": "intact",
+      "row": {
+        "incidentId": "golden-intact",
+        "status": "CONTAINED",
+        "findingType": "Recon:EC2/Portscan",
+        "severity": 5,
+        "eventTime": "2026-10-14T10:00:00.000Z",
+        "findingCreatedAt": "2026-10-14T09:59:58.000Z",
+        "containedAt": "2026-10-14T10:00:18.000Z"
+      },
+      "objects": [
+        {
+          "key": "incidents/golden-intact/manifest.json",
+          "versions": [
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-intact\", \"kind\": \"ebs-snapshot\"}\n"
+          ]
+        }
+      ],
+      "records": [
+        {
+          "key": "incidents/golden-intact/manifest.json",
+          "version": null,
+          "sha256": "c61df4822836de4cd7bc21e6726cf1c1475183b1bc3e897924a4d6b8d12ce4ae",
+          "sha256Base64": "xh30gig23kzXvCHmcmzxwUdRg7G8Pol5JKTWuNEs5K4="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": 18.0,
+        "chain_of_custody_ok": true,
+        "evidence": [
+          {
+            "key": "incidents/golden-intact/manifest.json",
+            "version_id": null,
+            "recorded_sha256": "c61df4822836de4cd7bc21e6726cf1c1475183b1bc3e897924a4d6b8d12ce4ae",
+            "actual_sha256": "c61df4822836de4cd7bc21e6726cf1c1475183b1bc3e897924a4d6b8d12ce4ae",
+            "ok": true,
+            "error": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "tampered",
+      "row": {
+        "incidentId": "golden-tampered",
+        "status": "CONTAINED",
+        "findingType": "Policy:S3/BucketBlockPublicAccessDisabled",
+        "severity": 8,
+        "eventTime": "2026-10-14T11:00:00.000Z",
+        "containedAt": "2026-10-14T11:00:09.250Z"
+      },
+      "objects": [
+        {
+          "key": "incidents/golden-tampered/prestate.json",
+          "versions": [
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-tampered\", \"kind\": \"PRESTATE\"}\n"
+          ]
+        }
+      ],
+      "records": [
+        {
+          "key": "incidents/golden-tampered/prestate.json",
+          "version": null,
+          "sha256": "cec5512f370dba633bb6d76e3b9099ea9fb0896c4d161439653c50f97a520d4d",
+          "sha256Base64": "zsVRLzcNumM7ttduO5CZ6p+wiWxNFhQ5ZTxQ+XpSDU0="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": 9.25,
+        "chain_of_custody_ok": false,
+        "evidence": [
+          {
+            "key": "incidents/golden-tampered/prestate.json",
+            "version_id": null,
+            "recorded_sha256": "cec5512f370dba633bb6d76e3b9099ea9fb0896c4d161439653c50f97a520d4d",
+            "actual_sha256": "ec3c242cb3a43e706e677557c7f4095deea6abca6fd5bd77eca49ce5ae3e1cef",
+            "ok": false,
+            "error": "mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing-object",
+      "row": {
+        "incidentId": "golden-missing",
+        "status": "CONTAINED",
+        "findingType": "UnauthorizedAccess:IAMUser/MaliciousIPCaller",
+        "severity": 8,
+        "eventTime": "2026-10-14T12:00:00.000Z",
+        "containedAt": "2026-10-14T12:01:30.000Z"
+      },
+      "objects": [],
+      "records": [
+        {
+          "key": "incidents/golden-missing/gone.json",
+          "version": null,
+          "sha256": "6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497",
+          "sha256Base64": "bBLgZy3IXDMTbLLQ6wuPUxUD+3oFBXX0JQfwUp4hVJc="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": 90.0,
+        "chain_of_custody_ok": false,
+        "evidence": [
+          {
+            "key": "incidents/golden-missing/gone.json",
+            "version_id": null,
+            "recorded_sha256": "6c12e0672dc85c33136cb2d0eb0b8f531503fb7a050575f42507f0529e215497",
+            "actual_sha256": null,
+            "ok": false,
+            "error": "NoSuchKey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "base64-mismatch",
+      "row": {
+        "incidentId": "golden-b64",
+        "status": "CONTAINED",
+        "findingType": "Execution:Runtime/NewBinaryExecuted",
+        "severity": 8,
+        "eventTime": "2026-10-14T13:00:00.000Z",
+        "containedAt": "2026-10-14T13:00:30.500Z"
+      },
+      "objects": [
+        {
+          "key": "incidents/golden-b64/task.json",
+          "versions": [
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-b64\", \"kind\": \"task-prestate\"}\n"
+          ]
+        }
+      ],
+      "records": [
+        {
+          "key": "incidents/golden-b64/task.json",
+          "version": null,
+          "sha256": "393e69a75790afbff749fe20e6444021914aa5eedf742ef92293bd636a6f08ca",
+          "sha256Base64": "9B8/piX/Eg3cp+9Fa/ZjcezqI8Ep9OTDI2cQHttRbPg="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": 30.5,
+        "chain_of_custody_ok": false,
+        "evidence": [
+          {
+            "key": "incidents/golden-b64/task.json",
+            "version_id": null,
+            "recorded_sha256": "393e69a75790afbff749fe20e6444021914aa5eedf742ef92293bd636a6f08ca",
+            "actual_sha256": "393e69a75790afbff749fe20e6444021914aa5eedf742ef92293bd636a6f08ca",
+            "ok": false,
+            "error": "mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "versioned",
+      "row": {
+        "incidentId": "golden-versioned",
+        "status": "CONTAINED",
+        "findingType": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS",
+        "severity": 8,
+        "eventTime": "2026-10-14T14:00:00.000Z",
+        "containedAt": "2026-10-14T14:00:45.000Z"
+      },
+      "objects": [
+        {
+          "key": "incidents/golden-versioned/manifest.json",
+          "versions": [
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-versioned\", \"kind\": \"snapshot-v0\"}\n",
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-versioned\", \"kind\": \"overwritten-later\"}\n"
+          ]
+        }
+      ],
+      "records": [
+        {
+          "key": "incidents/golden-versioned/manifest.json",
+          "version": 0,
+          "sha256": "619cae53a7fa816486261a534d56656d87eb11bb1712acd4fc4fbfceceeca74a",
+          "sha256Base64": "YZyuU6f6gWSGJhpTTVZlbYfrEbsXEqzU/E+/zs7sp0o="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": 45.0,
+        "chain_of_custody_ok": true,
+        "evidence": [
+          {
+            "key": "incidents/golden-versioned/manifest.json",
+            "version_id": "$version:0",
+            "recorded_sha256": "619cae53a7fa816486261a534d56656d87eb11bb1712acd4fc4fbfceceeca74a",
+            "actual_sha256": "619cae53a7fa816486261a534d56656d87eb11bb1712acd4fc4fbfceceeca74a",
+            "ok": true,
+            "error": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "not-contained",
+      "row": {
+        "incidentId": "golden-not-contained",
+        "status": "FAILED",
+        "findingType": "Recon:EC2/Portscan",
+        "severity": 5,
+        "eventTime": "2026-10-14T15:00:00.000Z",
+        "containedAt": "2026-10-14T15:00:10.000Z",
+        "failure": "States.TaskFailed"
+      },
+      "objects": [
+        {
+          "key": "incidents/golden-not-contained/manifest.json",
+          "versions": [
+            "{\"capturedAt\": \"2026-10-14T10:00:05.000Z\", \"incidentId\": \"golden-not-contained\", \"kind\": \"partial\"}\n"
+          ]
+        }
+      ],
+      "records": [
+        {
+          "key": "incidents/golden-not-contained/manifest.json",
+          "version": null,
+          "sha256": "ceb7caa11a3c5826cf5e402f66b20a6f03269ceb5a242f7464f0b7fad503c73e",
+          "sha256Base64": "zrfKoRo8WCbPXkAvZrIKbwMmnOtaJC90ZPC3+tUDxz4="
+        }
+      ],
+      "expected": {
+        "mttc_seconds": null,
+        "chain_of_custody_ok": true,
+        "evidence": [
+          {
+            "key": "incidents/golden-not-contained/manifest.json",
+            "version_id": null,
+            "recorded_sha256": "ceb7caa11a3c5826cf5e402f66b20a6f03269ceb5a242f7464f0b7fad503c73e",
+            "actual_sha256": "ceb7caa11a3c5826cf5e402f66b20a6f03269ceb5a242f7464f0b7fad503c73e",
+            "ok": true,
+            "error": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-evidence-dry-run",
+      "row": {
+        "incidentId": "golden-no-evidence",
+        "status": "WOULD_CONTAIN_DRY_RUN",
+        "findingType": "CloudShield:IPAddress/WafRateLimitExceeded",
+        "severity": 5,
+        "eventTime": "2026-10-14T16:00:00.000Z",
+        "wouldContainAt": "2026-10-14T16:00:04.000Z"
+      },
+      "objects": [],
+      "records": [],
+      "expected": {
+        "mttc_seconds": null,
+        "chain_of_custody_ok": null,
+        "evidence": []
+      }
+    }
+  ]
+}
