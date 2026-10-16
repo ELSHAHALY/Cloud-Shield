@@ -39,6 +39,21 @@ Set these later, not now:
 | `ENFORCE_GATES=true` | Only after `scripts/gate-selftest.sh all` shows ✓ for every gate. Until then the gates are fail-open. |
 | `STAGING_URL` | Once the app is deployed. Turns on the ZAP gate. |
 | `APP_DIR` | Only if the app is not at `app/docs-api`. |
+| `AWS_ECR_PUSH_ROLE_ARN` | After `environments/dev` is applied with `github_oidc_provider_arn` set (bootstrap output). Turns on the "Push scanned image (main only)" step of the image gate. |
+| `ECR_REPOSITORY` | Same time as `AWS_ECR_PUSH_ROLE_ARN`: the full repository URL the push step tags and pushes to. |
+
+The two ECR variables come from the dev outputs:
+
+```bash
+cd infra/terraform/bootstrap
+OIDC_ARN="$(terraform output -raw github_oidc_provider_arn)"
+cd ../environments/dev
+terraform apply -var "github_oidc_provider_arn=$OIDC_ARN"   # S1, locally (there is no CI apply role)
+gh variable set AWS_ECR_PUSH_ROLE_ARN --repo "$REPO" --body "$(terraform output -raw ecr_push_role_arn)"
+gh variable set ECR_REPOSITORY        --repo "$REPO" --body "$(terraform output -raw ecr_repository_url)"
+```
+
+CI only pushes, on `main`, an image whose Trivy scan passed; it never deploys. Deploying stays a local apply with `container_image` set to the digest shown in the job summary.
 
 ## 3. Branch protection on `main`
 
