@@ -7,6 +7,7 @@ recorded alongside, so a run report can cite them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -50,19 +51,58 @@ SCENARIOS: dict[str, Scenario] = {
         "S3Bucket",
         "pb03-s3-restore-bpa",
     ),
+    # D and E are replay-local fixtures only, and only while dry-run is on (D20).
+    "d": Scenario(
+        "d",
+        "ECS runtime compromise",
+        ("T1610", "T1059"),
+        "Execution:Runtime/NewBinaryExecuted",
+        "ECSCluster",
+        "pb04-ecs-task-contain",
+    ),
+    "e": Scenario(
+        "e",
+        "Edge IP abuse",
+        ("T1190", "T1595"),
+        "CloudShield:IPAddress/WafRateLimitExceeded",
+        "IPAddress",
+        "pb05-waf-ip-block",
+    ),
 }
+
+# Scenarios that never act on a real account (D20).
+DRY_RUN_ONLY = frozenset({"d", "e"})
+
+EDGE_SOURCE = "cloudshield.edge"
+_TASK_ARN = re.compile(
+    r"^(arn:aws[\w-]*:ecs:[a-z0-9-]+:\d{12}:)task/([\w-]{1,255})/[0-9a-f]{32}\Z", re.ASCII
+)
+
+
+def cluster_arn_of(task_arn: str) -> str | None:
+    """The cluster ARN a (new-format) task ARN belongs to, or None."""
+    match = _TASK_ARN.match(task_arn)
+    return f"{match.group(1)}cluster/{match.group(2)}" if match else None
 
 
 def _iso(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _envelope(detail: dict[str, Any], account: str, region: str, now: datetime) -> dict[str, Any]:
+def _envelope(
+    detail: dict[str, Any],
+    account: str,
+    region: str,
+    now: datetime,
+    *,
+    source: str = "aws.guardduty",
+    detail_type: str = "GuardDuty Finding",
+) -> dict[str, Any]:
     return {
         "version": "0",
         "id": f"sim-{int(now.timestamp() * 1000)}",
-        "detail-type": "GuardDuty Finding",
-        "source": "aws.guardduty",
+        "detail-type": detail_type,
+        "source": source,
         "account": account,
         "time": _iso(now),
         "region": region,
@@ -82,15 +122,20 @@ def build_event(
     user_name: str | None = None,
     access_key_id: str | None = None,
     bucket_name: str | None = None,
+    task_arn: str | None = None,
+    service_name: str | None = None,
+    ip: str | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
+    if scenario.resource_type == "IPAddress":
+        return _edge_event(scenario, account, region, now, ip)
     base = {
         "schemaVersion": "2.0",
         "accountId": account,
         "region": region,
         "id": f"sim-{scenario.key}-{int(now.timestamp())}",
         "type": scenario.finding_type,
-        "severity": 8.0 if scenario.key != "c" else 2.0,
+        "severity": 2.0 if scenario.key == "c" else 8.0,
         "createdAt": _iso(now),
         "updatedAt": _iso(now),
         "service": {"serviceName": "guardduty", "additionalInfo": {"sample": False}},
@@ -127,6 +172,18 @@ def build_event(
                 "userType": "IAMUser",
             },
         }
+    elif scenario.resource_type == "ECSCluster":
+        cluster = cluster_arn_of(task_arn or "")
+        if not (cluster and service_name):
+            raise ValueError("scenario D needs a task_arn (new ARN format) and service_name")
+        base["resource"] = {
+            "resourceType": "ECSCluster",
+            "ecsClusterDetails": {
+                "arn": cluster,
+                "name": cluster.rsplit("/", 1)[-1],
+                "taskDetails": {"arn": task_arn, "group": f"service:{service_name}"},
+            },
+        }
     else:  # S3Bucket
         if not bucket_name:
             raise ValueError("scenario C needs bucket_name")
@@ -136,3 +193,30 @@ def build_event(
         }
 
     return _envelope(base, account, region, now)
+
+
+def _edge_event(
+    scenario: Scenario, account: str, region: str, now: datetime, ip: str | None
+) -> dict[str, Any]:
+    """Scenario E: the harvester's event shape (plan §4.2), source cloudshield.edge."""
+    if not ip:
+        raise ValueError("scenario E needs ip (no default)")
+    family = "ipAddressV6" if ":" in ip else "ipAddressV4"
+    normalised = re.sub(r"[^0-9A-Za-z]", "-", ip)
+    detail = {
+        "schemaVersion": "2.0",
+        "accountId": account,
+        "region": region,
+        "id": f"sim-e-{normalised}-{int(now.timestamp())}",
+        "type": scenario.finding_type,
+        "severity": 5.0,
+        "createdAt": _iso(now),
+        "resource": {"resourceType": "IPAddress", "ipAddressDetails": {family: ip}},
+        "service": {
+            "serviceName": "cloudshield",
+            "additionalInfo": {"sample": False, "publisher": "sim-runner"},
+        },
+    }
+    return _envelope(
+        detail, account, region, now, source=EDGE_SOURCE, detail_type="CloudShield Edge Finding"
+    )

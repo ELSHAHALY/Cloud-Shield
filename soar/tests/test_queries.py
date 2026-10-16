@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 QUERIES_DIR = Path(__file__).resolve().parents[2] / "detection" / "athena-queries"
-CATALOGUED_TABLES = {"cloudtrail", "vpc_flow_logs", "guardduty_findings"}
+CATALOGUED_TABLES = {"cloudtrail", "vpc_flow_logs", "guardduty_findings", "waf_logs"}
 FORBIDDEN = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|MSCK|TRUNCATE|GRANT|REVOKE|UNLOAD)\b", re.IGNORECASE
 )
@@ -68,7 +68,7 @@ def test_only_catalogued_tables(path: Path) -> None:
 
 def test_each_query_filters_on_partition_columns() -> None:
     """Cost guard: every query must constrain at least one partition key."""
-    partitions = ("timestamp", "year", "month", "day", "hour", "dt")
+    partitions = ("timestamp", "year", "month", "day", "hour", "dt", "log_time")
     for path in SQL_FILES:
         body = path.read_text(encoding="utf-8").lower()
         assert any(

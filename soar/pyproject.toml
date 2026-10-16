@@ -25,9 +25,9 @@ filterwarnings = ["error", "ignore::DeprecationWarning:botocore.*", "ignore::Dep
 
 [tool.coverage.run]
 branch = true
-source = ["core", "safety_guard", "playbooks", "tools", "sims"]
+source = ["core", "safety_guard", "playbooks", "notifier", "tools", "sims"]
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 95
 show_missing = true
 skip_covered = true

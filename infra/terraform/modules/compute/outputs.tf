@@ -37,7 +37,7 @@ output "service_enabled" {
 }
 
 output "nlb_arn" {
-  description = "Target of the REST API Gateway VPC Link (future edge module). null while the service is disabled."
+  description = "Target of the REST API Gateway VPC Link (modules/edge). null while the service is disabled."
   value       = try(aws_lb.app[0].arn, null)
 }
 
@@ -57,4 +57,9 @@ output "report_worker_role_arn" {
 output "report_worker_instance_id" {
   description = "PB-01 forensic target / scenario A host. null while disabled."
   value       = try(aws_instance.worker[0].id, null)
+}
+
+output "ecr_push_role_arn" {
+  description = "Set as the GitHub repository variable AWS_ECR_PUSH_ROLE_ARN. null without github_oidc_provider_arn."
+  value       = one(aws_iam_role.ci_push[*].arn)
 }

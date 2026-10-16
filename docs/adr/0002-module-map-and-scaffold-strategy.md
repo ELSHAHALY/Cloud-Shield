@@ -15,10 +15,10 @@ Each module sits inside exactly one trust boundary from plan Figure 7.1, so a fu
 | `compute`: ECS, NLB, report-worker | TB2 | S1 (worker: C S3) | Workload | built, flag-gated |
 | `data` | TB3: data plane | S2 | Workload | built |
 | `log-archive` | TB5: security | S3 | Security | built |
-| `soar` | TB5: security | S3 | Security | built, playbooks flag-gated |
-| `edge` (API Gateway REST + VPC Link, WAF ×2, CloudFront) | TB1: AWS edge | S1 | Workload | planned |
-| `identity` (Cognito) | TB1 | S2 | Workload | planned |
-| `detection` (GuardDuty, Security Hub, Config, CloudTrail, Glue/Athena) | TB5 | S3 | Security | planned |
+| `soar` | TB5: security | S3 | Security | built, playbooks flag-gated; PB-04 / PB-05 / notifier flag-gated (Phase D, ADR-0005) |
+| `edge` (API Gateway REST + VPC Link, WAF ×2, CloudFront) | TB1: AWS edge | S1 | Workload | built (Phase D, ADR-0004), behind `enable_edge`; us-east-1 only |
+| `identity` (Cognito) | TB1 | S2 | Workload | built (Phase D, ADR-0004), always on |
+| `detection` (GuardDuty, Security Hub, Config, CloudTrail, Glue/Athena) | TB5 | S3 | Security | built (Phase C); `waf_logs` table added in Phase D |
 
 ADR-0001's separate `ecr`, `ecs`, `logging` and `cognito` modules are folded into `compute`, `detection` and `identity`.
 
@@ -33,6 +33,9 @@ Only real resources get built: anything that works with no application or Lambda
 | `container_image` (digest-pinned) | ECR + cluster + IAM only | + internal NLB, task definition, Fargate service |
 | `enable_report_worker` | — | + EC2 forensic target carrying the SOAR scope tag |
 | `soar_playbook_package` | GuardDuty findings go **straight to SNS** | + 4 Lambdas, Step Functions `cs-ir-router`; EventBridge retargets to it |
+| `enable_edge` (Phase D) | no CloudFront, WAF or SPA bucket | + CloudFront, both web ACLs, SPA bucket, WAF logs; the REST API too when `container_image` is set; PB-05 when the package is set |
+| `soar_scope_app_service` (Phase D) | the ECS service is untagged, so PB-04 can never act | + the SOAR scope tag on the service and its tasks (PB-04 also needs Runtime Monitoring) |
+| `chatops_webhook_param_name` (Phase D) | `""`: no notifier | + the ChatOps notifier Lambda subscribed to the incidents topic (needs the package) |
 
 `terraform test` (mocked provider) checks every default.
 
@@ -64,4 +67,8 @@ The NLB sets `enforce_security_group_inbound_rules_on_private_link_traffic = off
 - **Scenario routing.** IMDS credential theft arrives as `UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*` with `resourceType = AccessKey`. The router sends it to **PB-01**, not PB-02. The Medium and Low findings that scenarios A and C produce (`Recon:EC2/Portscan`, `Policy:S3/*`) bypass `min_severity` through `always_route_finding_types`.
 - **The router fails closed.** Only boolean `allowed == true` proceeds; only boolean `dry_run == false` acts; only `contained == true` from the playbook records CONTAINED.
 - **Lambda reserved concurrency defaults to unreserved (-1).** New accounts have a limit of 10, and AWS rejects any reservation that leaves fewer than 100 unreserved. Set it to 5 once the quota allows.
+- **PB-04 does not eradicate** (ADR-0005). `forceNewDeployment` re-runs the same task definition and image digest; a compromised image is redeployed too. ECS Exec capture and the new image are human steps. `DescribeTaskDefinition` needs `Resource: "*"`, and IAM cannot narrow `UpdateService` to `forceNewDeployment`.
+- **PB-04 is reachable only with paid GuardDuty Runtime Monitoring** and the opt-in scope tag on the service, and only at `>= min_severity` (D19).
+- **PB-05 blocks only at the CloudFront ACL**, never on `execute-api` directly (ADR-0004). "Contained" means the IP set was updated and read back; edge propagation is not observed. Blocks never expire automatically (D15).
+- **The PB-05 edge bus trusts its policy.** An account admin can rewrite the bus policy and publish (residual risk, ADR-0001).
 - **IMDSv2 is enforced on the report-worker.** Scenario A must use the token flow (PUT, then GET). The design's "SSRF-style IMDS query" is still valid; it just needs the token flow.

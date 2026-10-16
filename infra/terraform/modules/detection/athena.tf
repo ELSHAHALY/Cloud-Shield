@@ -399,6 +399,84 @@ resource "aws_glue_catalog_table" "guardduty_findings" {
   }
 }
 
+# WAF logs (modules/log-archive waf-logs.tf) — AWS-documented WAF
+# partition-projection layout [Athena docs], with the region folder
+# ("cloudfront" for the CloudFront ACL) and the web ACL name as enum
+# partitions so one table covers both ACLs:
+#   AWSLogs/<acct>/WAFLogs/<waf_region>/<webacl>/yyyy/MM/dd/HH/mm/
+resource "aws_glue_catalog_table" "waf_logs" {
+  count         = var.enable_waf_logs ? 1 : 0
+  name          = "waf_logs"
+  database_name = aws_glue_catalog_database.forensics.name
+  table_type    = "EXTERNAL_TABLE"
+
+  parameters = {
+    "EXTERNAL"                          = "TRUE"
+    "classification"                    = "json"
+    "projection.enabled"                = "true"
+    "projection.waf_region.type"        = "enum"
+    "projection.waf_region.values"      = "cloudfront,${local.region}"
+    "projection.webacl.type"            = "enum"
+    "projection.webacl.values"          = join(",", var.waf_web_acl_names)
+    "projection.log_time.type"          = "date"
+    "projection.log_time.format"        = "yyyy/MM/dd/HH/mm"
+    "projection.log_time.interval"      = "1"
+    "projection.log_time.interval.unit" = "MINUTES"
+    "projection.log_time.range"         = "${var.projection_start_date}/00/00,NOW"
+    "storage.location.template"         = "s3://${var.waf_log_bucket_name}/AWSLogs/${local.account_id}/WAFLogs/$${waf_region}/$${webacl}/$${log_time}"
+  }
+
+  dynamic "partition_keys" {
+    for_each = ["waf_region", "webacl", "log_time"]
+    content {
+      name = partition_keys.value
+      type = "string"
+    }
+  }
+
+  storage_descriptor {
+    location      = "s3://${var.waf_log_bucket_name}/AWSLogs/${local.account_id}/WAFLogs/"
+    input_format  = "org.apache.hadoop.mapred.TextInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
+
+    ser_de_info {
+      serialization_library = "org.openx.data.jsonserde.JsonSerDe"
+    }
+
+    dynamic "columns" {
+      for_each = [
+        ["timestamp", "bigint"],
+        ["formatversion", "int"],
+        ["webaclid", "string"],
+        ["terminatingruleid", "string"],
+        ["terminatingruletype", "string"],
+        ["action", "string"],
+        ["terminatingrulematchdetails", "array<struct<conditiontype:string,sensitivitylevel:string,location:string,matcheddata:array<string>>>"],
+        ["httpsourcename", "string"],
+        ["httpsourceid", "string"],
+        ["rulegrouplist", "array<struct<rulegroupid:string,terminatingrule:struct<ruleid:string,action:string,rulematchdetails:array<struct<conditiontype:string,sensitivitylevel:string,location:string,matcheddata:array<string>>>>,nonterminatingmatchingrules:array<struct<ruleid:string,action:string,overriddenaction:string,rulematchdetails:array<struct<conditiontype:string,sensitivitylevel:string,location:string,matcheddata:array<string>>>,challengeresponse:struct<responsecode:string,solvetimestamp:string>,captcharesponse:struct<responsecode:string,solvetimestamp:string>>>,excludedrules:string>>"],
+        ["ratebasedrulelist", "array<struct<ratebasedruleid:string,limitkey:string,maxrateallowed:int>>"],
+        ["nonterminatingmatchingrules", "array<struct<ruleid:string,action:string,rulematchdetails:array<struct<conditiontype:string,sensitivitylevel:string,location:string,matcheddata:array<string>>>,challengeresponse:struct<responsecode:string,solvetimestamp:string>,captcharesponse:struct<responsecode:string,solvetimestamp:string>>>"],
+        ["requestheadersinserted", "array<struct<name:string,value:string>>"],
+        ["responsecodesent", "string"],
+        ["httprequest", "struct<clientip:string,country:string,headers:array<struct<name:string,value:string>>,uri:string,args:string,httpversion:string,httpmethod:string,requestid:string,fragment:string,scheme:string,host:string>"],
+        ["labels", "array<struct<name:string>>"],
+        ["captcharesponse", "struct<responsecode:string,solvetimestamp:string,failurereason:string>"],
+        ["challengeresponse", "struct<responsecode:string,solvetimestamp:string,failurereason:string>"],
+        ["ja3fingerprint", "string"],
+        ["ja4fingerprint", "string"],
+        ["oversizefields", "string"],
+        ["requestbodysize", "int"],
+        ["requestbodysizeinspectedbywaf", "int"],
+      ]
+      content {
+        name = columns.value[0]
+        type = columns.value[1]
+      }
+    }
+  }
+}
+
 # -----------------------------------------------------------------------------
 # Catalogued hunt queries (FR-8): the repo files ARE the saved queries.
 # -----------------------------------------------------------------------------

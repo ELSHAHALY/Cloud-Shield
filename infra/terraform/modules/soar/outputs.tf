@@ -47,3 +47,37 @@ output "playbook_function_names" {
 output "evidence_bucket_arn" {
   value = aws_s3_bucket.evidence.arn
 }
+
+output "edge_event_bus_arn" {
+  description = "PB-05 dedicated edge bus (named publishers only). null without enable_pb05."
+  value       = one(aws_cloudwatch_event_bus.edge[*].arn)
+}
+
+output "edge_event_bus_name" {
+  description = "Phase E publishers put CloudShield edge events here (their role ARN must be in pb05_publisher_arns)."
+  value       = one(aws_cloudwatch_event_bus.edge[*].name)
+}
+
+output "pb05_never_block_parameter" {
+  description = "SSM parameter holding the CIDRs PB-05 never blocks. null without enable_pb05."
+  value       = one(aws_ssm_parameter.never_block[*].name)
+}
+
+output "pb05_harvester_function_name" {
+  value = one(aws_lambda_function.harvester[*].function_name)
+}
+
+output "notifier_function_name" {
+  description = "ChatOps notifier Lambda. null unless chatops_webhook_param_name is set (and the playbook package exists)."
+  value       = one(aws_lambda_function.notifier[*].function_name)
+}
+
+output "pb05_sweeper_function_name" {
+  description = "Lifts expired PB-05 blocks on a schedule (audit A2). null without enable_pb05."
+  value       = one(aws_lambda_function.sweeper[*].function_name)
+}
+
+output "pb05_harvest_state_table_name" {
+  description = "Per-address sighting counters (>= 2 consecutive harvests before a publish). null without enable_pb05."
+  value       = one(aws_dynamodb_table.harvest_state[*].name)
+}

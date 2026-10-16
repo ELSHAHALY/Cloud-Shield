@@ -6,6 +6,7 @@
 #   KMS key, ECR repo, ECS cluster, log groups, task execution + task roles
 # Gated by var.container_image != null   -> service.tf (NLB, task def, service)
 # Gated by var.enable_report_worker      -> worker.tf  (EC2 forensic target)
+# Gated by var.github_oidc_provider_arn  -> ci-push.tf (GitHub Actions ECR push role)
 ###############################################################################
 
 data "aws_caller_identity" "current" {}
@@ -213,6 +214,8 @@ data "aws_iam_policy_document" "execution" {
     actions   = ["ecr:GetAuthorizationToken"]
     resources = ["*"] # GetAuthorizationToken does not support resource-level permissions
   }
+  # Plus, when given, the GuardDuty-owned repository of the Runtime Monitoring
+  # sidecar (F20): without it, tasks fail to start once the agent is injected.
   statement {
     sid = "PullThisRepoOnly"
     actions = [
@@ -220,7 +223,7 @@ data "aws_iam_policy_document" "execution" {
       "ecr:BatchGetImage",
       "ecr:GetDownloadUrlForLayer",
     ]
-    resources = [aws_ecr_repository.app.arn]
+    resources = concat([aws_ecr_repository.app.arn], var.guardduty_agent_ecr_repository_arns)
   }
   statement {
     sid       = "DecryptImageLayers"

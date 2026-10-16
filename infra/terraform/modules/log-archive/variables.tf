@@ -55,6 +55,12 @@ variable "enable_guardduty_export" {
   default     = false
 }
 
+variable "enable_waf_logs" {
+  description = "Create the aws-waf-logs-<name>-<account> bucket that both web ACLs log to (modules/edge). Plan-time bool."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Extra tags (provider default_tags already apply Project/Environment/ManagedBy)."
   type        = map(string)

@@ -1,9 +1,9 @@
 # CloudShield — Handoff
 
-**As of:** 14 Oct 2026 (updated after the S3 SOAR build)  **Repo state:** scaffold on `main`; CI fix and SOAR work on branches, PRs pending (§10)
+**As of:** 16 Oct 2026 (updated after Phase D)  **Repo state:** scaffold on `main`; PRs #1 → #2 → #3 stacked and pending review (§10–§12)
 **For:** @ELSHAHALY (S1), @YasseenAbdelghany (S2), @ahklsfg (S3), and anyone picking this up next.
 
-This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the three ADRs.
+This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the five ADRs.
 
 ---
 
@@ -17,7 +17,7 @@ This file records everything done so far, every decision made, what is proven, w
 | Pushed to GitHub | **Yes** (14 Oct, `1019669`). History restarts there: the zip carried no `.git`. |
 | Deployed to AWS | **No.** Nothing has been applied. |
 | `terraform validate` / `test` | **Pass locally** (TF 1.16.5, §10). The first CI run failed `terraform test`; fixed on `fix/ci-terraform-test-mocks`. |
-| App code (S2) | Not started. |
+| App code (S2) | Not started (Phase E). Cognito `identity` module and the token contract (`app/README.md`) are built (§12). |
 | SOAR Lambda code (S3) | **Built and audited** on `feat/s3-soar-playbooks` (§10). Still switched off: no package uploaded, dry-run on. |
 | **Team-size waiver (G1)** | **Unknown. This is still the top risk (R1, H×H).** |
 
@@ -352,3 +352,61 @@ Audit confirmed sound: the delivery IAM/KMS/bucket policies (least-privilege, pe
 2. Deploy: `enable_lab_targets = true`, upload the SOAR zip, set `soar_playbook_package` with dry-run **on**.
 3. `make sim SCENARIO=c MODE=replay TARGET=aws ...` → expect `WOULD_CONTAIN_DRY_RUN`; then dry-run off and measure MTTC; run the three hunt queries; generate the IR report.
 4. If a detector/recorder already exists in the region, import it or set `manage_guardduty_detector = false` / `enable_config = false` (detection/README.md).
+
+---
+
+## 12. Update 16 Oct: Phase D — edge, identity, WAF, PB-04/PB-05, SOAR enhancements
+
+Branch `feat/s1-s2-edge-identity-waf` (stacked on #2). Plan: `docs/plans/s1-s2-edge-identity-waf.md`. Design records: **ADR-0004** (edge, identity, WAF) and **ADR-0005** (PB-04 / PB-05). Pipeline: Planner → Builder (3 stages) → Independent Auditor → Validator (fixes + gates).
+
+### What was built
+
+| Area | Owner | Summary |
+|---|---|---|
+| `modules/identity` | S2 | Cognito: TOTP MFA (`ON` default, `OPTIONAL` allowed), admin-only sign-up, 14-char passwords, user-existence errors prevented, immutable non-writable `custom:tenant_id`, SPA client (no secret, SRP + refresh), groups `admin` / `member` / `auditor` / `secops-analyst`. Always on. |
+| `modules/edge` | S1 | One CloudFront distribution (`/*` → private SPA bucket via OAC; `/api/*` → REGIONAL REST API + VPC Link + Cognito authorizer). CloudFront WAF: SoarBlockedIps (PB-05), IP reputation, `SoarApiRateLimit` (`/api/*`, feeds PB-05), site-wide `RateLimitPerIp` (429), Common, KnownBadInputs. Regional WAF: origin-verify header, KnownBadInputs, SQLi. CSP + security headers; no `custom_error_response`. Behind `enable_edge` (default **off**, ≈ $20/month). Requires region us-east-1 (no provider alias: TF 1.16.5 standalone `validate` fails with `configuration_aliases`). |
+| CI / compute | S1 | GitHub-OIDC ECR push role (exact `main` ref); the image is pushed only when Trivy **and** the secrets/SAST/SCA scans really passed, even in fail-open mode. PB-04 prerequisites: `stopTimeout = 2`, optional scope tag on the ECS service. |
+| WAF logs + hunting | S3 | `aws-waf-logs-*` bucket (Authorization / cookie / origin header redacted), Glue `waf_logs` table, hunt query `04`. |
+| **PB-04** ECS containment | S3 | Proves task ↔ service membership with `ListTasks`, captures task metadata, `StopTask`, `forceNewDeployment`, verifies the specific new deployment + dead processes; evidence after CONTAINED. Needs GuardDuty Runtime Monitoring (off by default). |
+| **PB-05** edge IP block | S3 | Dedicated event bus (Deny for unlisted publishers); harvester publishes an IP only after **2 consecutive** harvests of the `/api/*` rate rule; PB-05 re-checks the IP rules and never-block list and **corroborates with WAF's own rate-limited keys** before an add-only, lock-token `UpdateIPSet` + read-back. **Auto-expiry sweeper** lifts blocks after `blockExpiresAt` (24 h), remove-only. |
+| Enhancements | S3 | ChatOps notifier (webhook URL from SSM SecureString; https + exact host allow-list, no redirects/proxies; never raises into SNS; 4-grant IAM). IR report: executive triage (ATT&CK, impact, eradication/recovery) + PB-03 Terraform remediation snippet. Opt-in LLM summary (`tools/ai_summary.py`; off by default; redacted; `claude-opus-5-5` via the Messages API; never in the Lambda zip). |
+| Sims D / E | S3 | Replay-local only, dry-run forced (cannot act even if the SSM switch flips mid-run). |
+
+### Decisions (16 Oct, beyond the plan)
+
+| # | Decision |
+|---|---|
+| D18 | Scope tag stays `cloudshield:soar-scope=in-scope` (the brief's `soar-enabled=true` was not adopted). |
+| D9′ | No provider alias in `modules/edge`; region preconditions instead. |
+| D15′ | **Auto-expiry** of PB-05 blocks (user choice, audit A2): a sweeper removes only expired, row-tracked addresses. Automation still stops at containment; workload recovery stays human. |
+
+### Audit: FAIL → fixed (2 MAJOR, 9 MINOR)
+
+| ID | Finding | Fix |
+|---|---|---|
+| A1 | PB-05 trusted caller-written "edge / fresh" fields: anyone able to start the router could block any public IP. | PB-05 corroborates with `GetRateBasedStatementManagedKeys`, re-reads never-block, re-checks IP rules; edge type allow-list. |
+| A2 | A short rate-limit became an indefinite block for everyone behind a shared IP. | `/api/*`-scoped feeding rule, 2-harvest persistence, auto-expiry sweeper; shared-egress risk documented. |
+| A3 | Untracked blocks possible; tool advised removing still-wanted blocks. | Row written before `UpdateIPSet`; tool groups by address, reports expired / lost / orphan. |
+| A4 | PB-04 ownership "proof" forgeable via `group`/`startedBy`. | `ListTasks(serviceName)` membership. |
+| A5 | Routing by `type`, guard by target. | Type-based choices also require `resourceType`; bus rule pinned to `CloudShield:IPAddress/`. |
+| A6 | Router-parity test could pass for the wrong reason. | Shared `route_choices.json` asserted by both terraform test and pytest. |
+| A7 | ID tokens visible in WAF sampled requests. | Sampling off on both ACLs. |
+| A8 | Untrue Checkov reason (SPA bucket). | SPA bucket added to CloudTrail data events. |
+| A9 | CI could push an image from a commit that failed other gates. | Push requires every gate's real outcome; OIDC `job_workflow_ref` customisation documented as follow-up. |
+| A10 | Dry-run race in sims D/E. | Dry-run forced for D/E. |
+| A11 | Recreating the IP sets drops blocks silently. | Documented; tool reports "lost". |
+
+### Proven locally (Windows, CI-pinned versions)
+
+- ruff clean; pytest **622** passed, coverage **97.45 %** (gate 95 %).
+- `terraform fmt` clean; `validate` in bootstrap, dev and all 10 modules; `terraform test` **84/84** (compute 12, data 2, detection 14, edge 11, identity 8, lab-targets 1, log-archive 3, soar 33).
+- Checkov 3.3.26: **922 passed, 0 failed** (117 skips, each with a reason). Gitleaks: no leaks. actionlint clean. Lambda zip deterministic (`core`, `notifier`, `playbooks`, `safety_guard`).
+
+**Not proven:** Semgrep (Windows) → PR #3 CI; nothing applied to AWS. The verify-on-first-apply list is in ADR-0004 §9 / ADR-0005 (ECS condition keys, `ListTasks` resource type, WAF alarm dimensions for CLOUDFRONT scope, rate-key listing on a scoped rule, bus Deny vs an admin, KMS on the new DynamoDB tables, `CloudFront-Viewer-Address` forwarding, webhook delivery, the Messages API request).
+
+### Next
+
+1. Review/merge **#1 → #2 → #3** (CODEOWNERS now spans S1/S2/S3 on edge, identity and compute).
+2. S1: apply `bootstrap` (new output `github_oidc_provider_arn`), set `AWS_ECR_PUSH_ROLE_ARN` / `ECR_REPOSITORY`; optionally customise the OIDC subject (runbook).
+3. Lab apply with `enable_edge = true` only when needed (cost); run `docs/runbooks/edge-waf-demo.md` against our own distribution; work through the verify-on-apply list.
+4. Phase E: Node `docs-api` (decoy route publishes a **corroborated** edge type to the PB-05 bus), React SOC dashboard (`secops-analyst`), `docker-compose`.

@@ -127,13 +127,65 @@ variable "worker_permissions_boundary_arn" {
 }
 
 variable "soar_scope_tag" {
-  description = "Tag that marks a resource as in scope for SOAR automation. Applied ONLY to the report-worker (and its volume) here."
+  description = "Tag that marks a resource as in scope for SOAR automation. Applied to the report-worker (and its volume) and, only with soar_scope_app_service, to the docs-api service and its tasks."
   type        = map(string)
   default     = { "cloudshield:soar-scope" = "in-scope" }
 
   validation {
     condition     = length(var.soar_scope_tag) == 1
     error_message = "Exactly one scope tag key/value pair."
+  }
+}
+
+# ---------------- PB-04 prerequisites (Phase D) ----------------
+variable "soar_scope_app_service" {
+  description = "Put the SOAR scope tag on the docs-api ECS service (propagated to its tasks), making them PB-04 targets. Off by default: auto-stopping production tasks is opt-in."
+  type        = bool
+  default     = false
+}
+
+variable "guardduty_agent_ecr_repository_arns" {
+  description = "GuardDuty Runtime Monitoring Fargate agent repositories the execution role may pull from (per-region ARNs from the GuardDuty docs). Empty = this repository only."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for a in var.guardduty_agent_ecr_repository_arns : can(regex("^arn:aws[a-z-]*:ecr:[a-z0-9-]+:\\d{12}:repository/aws-guardduty-agent-fargate$", a))])
+    error_message = "Each entry must be a GuardDuty agent ECR repository ARN (…:repository/aws-guardduty-agent-fargate)."
+  }
+}
+
+# ---------------- CI image push (gap 9, decision D7) ----------------
+variable "github_oidc_provider_arn" {
+  description = "bootstrap output github_oidc_provider_arn. null = no CI push role."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.github_oidc_provider_arn == null || can(regex("^arn:aws[a-z-]*:iam::\\d{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$", var.github_oidc_provider_arn))
+    error_message = "Must be the GitHub Actions OIDC provider ARN (…:oidc-provider/token.actions.githubusercontent.com)."
+  }
+}
+
+variable "github_repository" {
+  description = "owner/repo whose workflow may push images. Case-sensitive, exact."
+  type        = string
+  default     = "ELSHAHALY/Cloud-Shield"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$", var.github_repository))
+    error_message = "github_repository must be owner/repo, with no wildcards."
+  }
+}
+
+variable "ecr_push_branch" {
+  description = "The only branch allowed to push (exact match on the OIDC sub claim)."
+  type        = string
+  default     = "main"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._/-]{1,100}$", var.ecr_push_branch)) && !strcontains(var.ecr_push_branch, "*")
+    error_message = "ecr_push_branch must be a plain branch name, with no wildcards."
   }
 }
 

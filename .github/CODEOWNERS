@@ -21,6 +21,7 @@
 /infra/terraform/bootstrap/                 @ELSHAHALY
 /infra/terraform/modules/network/           @ELSHAHALY
 /infra/terraform/modules/compute/           @ELSHAHALY
+/infra/terraform/modules/edge/              @ELSHAHALY
 /Makefile                                   @ELSHAHALY
 /.pre-commit-config.yaml                    @ELSHAHALY
 /.zap/                                      @ELSHAHALY @YasseenAbdelghany
@@ -28,6 +29,7 @@
 # ---------------- S2 — App / Identity / Data ----------------
 /app/                                       @YasseenAbdelghany
 /infra/terraform/modules/data/              @YasseenAbdelghany
+/infra/terraform/modules/identity/          @YasseenAbdelghany
 
 # ---------------- S3 — SecOps / SOAR / Forensics ----------------
 /soar/                                      @ahklsfg
@@ -41,6 +43,13 @@
 /infra/terraform/environments/              @ELSHAHALY @ahklsfg
 # The report-worker is S1's code but S3's forensic target.
 /infra/terraform/modules/compute/worker.tf  @ELSHAHALY @ahklsfg
+# The ECR push role (supply chain) and the PB-04 target service.
+/infra/terraform/modules/compute/ci-push.tf  @ELSHAHALY @ahklsfg
+/infra/terraform/modules/compute/service.tf  @ELSHAHALY @ahklsfg
+# The API is S1's edge but carries S2's token contract.
+/infra/terraform/modules/edge/api.tf        @ELSHAHALY @YasseenAbdelghany
+# The CloudFront WAF holds the PB-05 IP sets.
+/infra/terraform/modules/edge/waf.tf        @ELSHAHALY @ahklsfg
 # The quarantine SG is what PB-01 isolates onto.
 /infra/terraform/modules/network/security-groups.tf  @ELSHAHALY @ahklsfg
 # The pipeline IS a security control: platform or SecOps must approve.

@@ -10,6 +10,10 @@
 # Gated by var.playbook_package != null:
 #   playbooks.tf     Lambda functions + per-playbook least-privilege roles
 #   state-machine.tf Step Functions "cs-ir-router"; EventBridge retargets to it
+#   edge-bus.tf      PB-05 only: dedicated edge bus, never-block list, harvester
+#                    (+ its sighting table)
+#   pb05-sweeper.tf  PB-05 only: lifts blocks whose blockExpiresAt has passed
+#   notify.tf        ChatOps notifier, only with chatops_webhook_param_name
 #
 # MTTC (plan §2.4, decision 8 Oct): measured from the EventBridge event `time`
 # to the CONTAINED transition. Both the event time and GuardDuty's own
@@ -28,6 +32,11 @@ locals {
   scope_tag_key    = keys(var.soar_scope_tag)[0]
   scope_tag_value  = values(var.soar_scope_tag)[0]
   ssm_prefix       = "/${var.name}/soar"
+
+  # Phase D (plan §4.3): plan-time bools, and nothing without the package.
+  enable_pb04       = var.enable_pb04 && local.enable_playbooks
+  enable_pb05       = var.enable_pb05 && local.enable_playbooks
+  edge_event_source = "cloudshield.edge"
 }
 
 # -----------------------------------------------------------------------------

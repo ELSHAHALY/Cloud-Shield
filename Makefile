@@ -6,7 +6,7 @@ TF_TEST_DIRS := $(patsubst %/tests,%,$(wildcard infra/terraform/modules/*/tests)
 
 PYTHON ?= python3
 
-.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report
+.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report expired-blocks
 
 help:
 	@echo "make scan           - every local gate (secrets, sast, sca, iac, soar)"
@@ -17,8 +17,9 @@ help:
 	@echo "make soar-lint      - ruff on the SOAR Lambdas"
 	@echo "make soar-test      - SOAR unit tests (moto) with coverage gate"
 	@echo "make package-soar   - deterministic Lambda zip -> build/soar-playbooks.zip"
-	@echo "make sim            - attack sim: SCENARIO=a|a-recon|b|c MODE=replay [TARGET=local|aws]"
+	@echo "make sim            - attack sim: SCENARIO=a|a-recon|b|c|d|e MODE=replay [TARGET=local|aws]"
 	@echo "make ir-report      - IR report from an incident: INCIDENT=<id> [FMT=md|json]"
+	@echo "make expired-blocks - audit PB-05 IP blocks: expired, lost, orphans (read-only)"
 
 scan: secrets sast sca iac soar-lint soar-test
 
@@ -68,6 +69,9 @@ gate-selftest:
 
 # Attack simulation (plan §7). Offline default; AWS targets need credentials.
 # e.g. make sim SCENARIO=c ACCOUNT=123456789012 NAME=cloudshield-dev SIM_ARGS="--bucket-name cloudshield-dev-lab-exposure-123456789012"
+# D/E (D20): replay --target local only, and only while the SSM dry-run switch reads true:
+#   make sim SCENARIO=e ACCOUNT=123456789012 SIM_ARGS="--ip <client-ip>"
+#   make sim SCENARIO=d ACCOUNT=123456789012 SIM_ARGS="--task-arn <arn> --service-name docs-api"
 SCENARIO ?= a-recon
 MODE     ?= replay
 TARGET   ?= local
@@ -80,3 +84,9 @@ sim:
 FMT ?= md
 ir-report:
 	cd soar && $(PYTHON) -m tools.generate_ir_report $(INCIDENT) --table $(NAME)-soar-incidents --format $(FMT)
+
+# PB-05 block audit (D15): expired / lost / orphan entries. Read-only: never
+# calls UpdateIPSet (the sweeper Lambda lifts expired blocks).
+# Needs dynamodb:Scan + kms:Decrypt (SOAR key) + wafv2:GetIPSet.
+expired-blocks:
+	cd soar && $(PYTHON) -m tools.list_expired_blocks --table $(NAME)-soar-incidents --region $(REGION) --format $(if $(filter json,$(FMT)),json,text)

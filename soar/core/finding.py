@@ -6,6 +6,7 @@ malformed or hostile payload is rejected before any AWS call is made.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,19 @@ EXFILTRATION_PREFIX = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration
 # Data-access findings (Exfiltration:S3/*, Impact:S3/*) by authenticated
 # principals are NOT stopped by BPA and must go to an analyst.
 S3_EXPOSURE_PREFIX = "Policy:S3/Bucket"
+# PB-05 (plan §4.2): custom events from the dedicated edge bus. Only this
+# source with resourceType IPAddress resolves to an IP target; GuardDuty can
+# never produce one.
+EDGE_SOURCE = "cloudshield.edge"
+IP_RESOURCE_TYPE = "IPAddress"
+ECS_RESOURCE_TYPE = "ECSCluster"
+# Edge finding types (audit A1, A5). The edge-bus rule only forwards types with
+# this prefix, and the guard and PB-05 accept only the explicit allow-list:
+# each allowed type must have a corroboration check in PB-05 (the rate-limit
+# type is corroborated with WAF's own managed keys). Phase E adds its own.
+EDGE_TYPE_PREFIX = "CloudShield:IPAddress/"
+EDGE_RATE_FINDING_TYPE = "CloudShield:IPAddress/WafRateLimitExceeded"
+EDGE_FINDING_TYPES = frozenset({EDGE_RATE_FINDING_TYPE})
 
 _INSTANCE_ID = re.compile(r"^i-(?:[0-9a-f]{8}|[0-9a-f]{17})$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")
@@ -23,6 +37,10 @@ _IAM_USER_NAME = re.compile(r"^[\w+=,.@-]{1,64}$")
 _BUCKET_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _FINDING_ID = re.compile(r"^[\w.:-]{1,128}$")
 _ROLE_ID = re.compile(r"^AROA[A-Z0-9]{8,124}$")
+_ARN_PREFIX = r"^arn:aws[\w-]*:ecs:[a-z0-9-]+:\d{12}:"
+_ECS_TASK_ARN = re.compile(_ARN_PREFIX + r"task/([\w-]{1,255})/[0-9a-f]{32}\Z", re.ASCII)
+_ECS_CLUSTER_ARN = re.compile(_ARN_PREFIX + r"cluster/([\w-]{1,255})\Z", re.ASCII)
+_ECS_SERVICE_GROUP = re.compile(r"^service:([\w-]{1,255})\Z", re.ASCII)
 
 
 class MalformedFindingError(ValueError):
@@ -49,11 +67,63 @@ class S3BucketTarget:
 
 
 @dataclass(frozen=True)
+class EcsTaskTarget:
+    cluster_arn: str
+    task_arn: str
+    # From taskDetails.group ("service:<name>"); None = not a service task,
+    # which PB-04 and the guard refuse. Only a hint: the guard and PB-04
+    # re-read the live task and cross-check the service's deployments.
+    service_name: str | None
+
+
+@dataclass(frozen=True)
+class IpAddressTarget:
+    address: str  # canonical form; IPv4-mapped IPv6 is normalised to IPv4
+    version: int  # 4 or 6
+
+
+@dataclass(frozen=True)
 class UnknownTarget:
     reason: str
 
 
-Target = Ec2Target | IamUserTarget | S3BucketTarget | UnknownTarget
+Target = (
+    Ec2Target | IamUserTarget | S3BucketTarget | EcsTaskTarget | IpAddressTarget | UnknownTarget
+)
+
+
+def parse_single_ip(value: Any) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Exactly one address, or None. No prefixes ("/"), no zone ids ("%"), no
+    surrounding whitespace. IPv4-mapped IPv6 (::ffff:a.b.c.d) becomes IPv4, so
+    the IPv4 rules and the IPv4 block list apply to it (plan §4.2 rule 2)."""
+    if not isinstance(value, str) or not value or len(value) > 45:
+        return None
+    if "/" in value or "%" in value or value != value.strip():
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def ip_refusal(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
+    """Why an address may never be blocked (plan §4.2 rule 3), or None.
+
+    `is_global` is False for private, loopback, link-local, shared (100.64/10)
+    and documentation ranges; multicast, unspecified and reserved are checked
+    separately because `is_global` does not cover all of them (F25)."""
+    if not address.is_global:
+        return "address is not globally routable"
+    if address.is_multicast:
+        return "address is multicast"
+    if address.is_unspecified:
+        return "address is unspecified"
+    if address.is_reserved:
+        return "address is reserved"
+    return None
 
 
 def parse_time(value: Any, field: str) -> datetime:
@@ -86,12 +156,66 @@ def _is_sample(detail: dict[str, Any]) -> bool:
     return sample is True or (isinstance(sample, str) and sample.strip().lower() == "true")
 
 
-def _resolve_target(finding_type: str, resource: dict[str, Any]) -> Target:
+def _resolve_ecs(resource: dict[str, Any]) -> Target:
+    cluster = resource.get("ecsClusterDetails")
+    if not isinstance(cluster, dict):
+        return UnknownTarget("ECS finding without ecsClusterDetails")
+    task = cluster.get("taskDetails")
+    task_arn = task.get("arn") if isinstance(task, dict) else None
+    if not isinstance(task_arn, str):
+        return UnknownTarget("ECS finding without a task")
+    task_match = _ECS_TASK_ARN.match(task_arn)
+    if not task_match:
+        return UnknownTarget("ECS finding without a valid task ARN")
+    cluster_arn = cluster.get("arn")
+    cluster_match = _ECS_CLUSTER_ARN.match(cluster_arn) if isinstance(cluster_arn, str) else None
+    if not cluster_match:
+        return UnknownTarget("ECS finding without a valid cluster ARN")
+    if cluster_match.group(1) != task_match.group(1):
+        return UnknownTarget("ECS task ARN does not belong to the finding's cluster")
+    # Tags embedded in the finding (cluster or task) are deliberately ignored:
+    # the guard reads the live task's tags.
+    group = task.get("group")
+    group_match = _ECS_SERVICE_GROUP.match(group) if isinstance(group, str) else None
+    return EcsTaskTarget(cluster_arn, task_arn, group_match.group(1) if group_match else None)
+
+
+def _resolve_ip(resource: dict[str, Any]) -> Target:
+    details = resource.get("ipAddressDetails")
+    if not isinstance(details, dict):
+        return UnknownTarget("IP finding without ipAddressDetails")
+    present = {k: details[k] for k in ("ipAddressV4", "ipAddressV6") if k in details}
+    if len(present) != 1:
+        return UnknownTarget("IP finding must name exactly one address")
+    field, raw = next(iter(present.items()))
+    address = parse_single_ip(raw)
+    if address is None:
+        return UnknownTarget("IP finding without a single valid address")
+    # The declared family must match, except IPv4-mapped IPv6 (normalised to v4).
+    raw_is_v6 = ":" in raw
+    if (field == "ipAddressV4") == raw_is_v6:
+        return UnknownTarget(f"{field} holds an address of the other family")
+    return IpAddressTarget(str(address), address.version)
+
+
+def _resolve_target(source: str, finding_type: str, resource: dict[str, Any]) -> Target:
     resource_type = resource.get("resourceType")
 
+    # PB-05 targets exist only on edge events; any other source naming an
+    # IPAddress resource (or an edge event naming anything else) is unknown.
+    if source == EDGE_SOURCE or resource_type == IP_RESOURCE_TYPE:
+        if source == EDGE_SOURCE and resource_type == IP_RESOURCE_TYPE:
+            return _resolve_ip(resource)
+        return UnknownTarget(f"source {source!r} with resource type {resource_type!r}")
+
+    if resource_type == ECS_RESOURCE_TYPE:
+        return _resolve_ecs(resource)
+
     # Scenario A: stolen instance-role credentials arrive as resourceType
-    # AccessKey, but the target is the instance the session belongs to.
-    if finding_type.startswith(EXFILTRATION_PREFIX):
+    # AccessKey, but the target is the instance the session belongs to. The
+    # router's PB01 choice requires the same pair (type AND AccessKey, audit
+    # A5), so the guard always vets the target the router will act on.
+    if finding_type.startswith(EXFILTRATION_PREFIX) and resource_type == "AccessKey":
         details = resource.get("accessKeyDetails")
         principal = details.get("principalId") if isinstance(details, dict) else None
         if not isinstance(principal, str) or ":" not in principal:
@@ -135,6 +259,7 @@ def _resolve_target(finding_type: str, resource: dict[str, Any]) -> Target:
 
 @dataclass(frozen=True)
 class Finding:
+    source: str  # EventBridge `source` ("" when absent)
     id: str
     type: str
     severity: float
@@ -163,8 +288,11 @@ class Finding:
         if not isinstance(resource_type, str) or not resource_type:
             raise MalformedFindingError("detail.resource.resourceType is missing")
 
+        source = event.get("source")
+        source = source if isinstance(source, str) else ""
         created = detail.get("createdAt")
         return cls(
+            source=source,
             id=finding_id,
             type=finding_type,
             severity=float(severity),
@@ -172,7 +300,7 @@ class Finding:
             is_sample=_is_sample(detail),
             event_time=parse_time(event.get("time"), "time"),
             created_at=parse_time(created, "detail.createdAt") if created is not None else None,
-            target=_resolve_target(finding_type, resource),
+            target=_resolve_target(source, finding_type, resource),
         )
 
     def seconds_since_event(self, now: datetime) -> float:

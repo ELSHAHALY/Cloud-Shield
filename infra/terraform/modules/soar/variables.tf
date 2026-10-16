@@ -135,3 +135,215 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+# -----------------------------------------------------------------------------
+# Phase D: PB-04 (ECS task containment) and PB-05 (WAF IP block). Both are
+# plan-time bools (D6) and need playbook_package as well. Off by default.
+# -----------------------------------------------------------------------------
+variable "enable_pb04" {
+  description = "Create PB-04 (stop a compromised ECS task + redeploy its service). Dev sets it only with a container image, GuardDuty Runtime Monitoring and the scope-tagged app service (D19, F20)."
+  type        = bool
+  default     = false
+}
+
+variable "ecs_cluster_name" {
+  description = "PB-04: the only ECS cluster it may act in (IAM ARNs are built from it)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_pb04 || can(regex("^[A-Za-z0-9_-]{1,255}$", var.ecs_cluster_name))
+    error_message = "enable_pb04 needs ecs_cluster_name (1-255 letters, digits, - or _)."
+  }
+}
+
+variable "ecs_cluster_arn" {
+  description = "PB-04: ARN of ecs_cluster_name (the ecs:cluster condition value and ECS_CLUSTER_ARN)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_pb04 || var.ecs_cluster_arn != null
+    error_message = "enable_pb04 needs ecs_cluster_arn."
+  }
+}
+
+variable "ecs_service_names" {
+  description = "PB-04: the only ECS services it may redeploy (and whose tasks it may stop)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !var.enable_pb04 || length(var.ecs_service_names) > 0
+    error_message = "enable_pb04 needs at least one ECS service name."
+  }
+  validation {
+    condition     = alltrue([for s in var.ecs_service_names : can(regex("^[A-Za-z0-9_-]{1,255}$", s))])
+    error_message = "ECS service names are 1-255 letters, digits, - or _."
+  }
+}
+
+variable "enable_pb05" {
+  description = "Create PB-05 (block a client IP in the CloudFront WAF), the dedicated edge bus, the never-block list and the rate-rule harvester. Requires us-east-1 (F2)."
+  type        = bool
+  default     = false
+}
+
+variable "block_ip_set_arns" {
+  description = "PB-05: the two CLOUDFRONT-scope IP sets it may append to (modules/edge block_ip_set_arns, v4 and v6)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = !var.enable_pb05 || length(var.block_ip_set_arns) == 2
+    error_message = "enable_pb05 needs exactly the two PB-05 IP set ARNs (IPv4 and IPv6)."
+  }
+}
+
+variable "waf_web_acl" {
+  description = "PB-05 harvester: the CloudFront web ACL holding the rate rule (modules/edge cloudfront_web_acl)."
+  type = object({
+    name = string
+    id   = string
+    arn  = string
+  })
+  default = null
+
+  validation {
+    condition     = !var.enable_pb05 || var.waf_web_acl != null
+    error_message = "enable_pb05 needs waf_web_acl."
+  }
+}
+
+variable "waf_rate_rule_name" {
+  description = "The PB-05-feeding rate rule (modules/edge soar_rate_rule_name: /api/* only). The harvester reads its managed keys, PB-05 corroborates every block against them, and the alarm watches it. Never the site-wide RateLimitPerIp (audit A2)."
+  type        = string
+  default     = "SoarApiRateLimit"
+}
+
+variable "pb05_publisher_arns" {
+  description = "IAM role ARNs allowed to publish onto the edge bus besides the harvester (Phase E: the docs-api task role; optionally an operator replay role). Everyone else is explicitly denied."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for a in var.pb05_publisher_arns : can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/", a))])
+    error_message = "pb05_publisher_arns must be IAM role ARNs."
+  }
+}
+
+variable "pb05_never_block_cidrs" {
+  description = "Operator CIDRs PB-05 must never block (added to the NAT EIP /32 in the never-block SSM parameter)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.pb05_never_block_cidrs : can(cidrhost(c, 0))])
+    error_message = "pb05_never_block_cidrs must be CIDRs (e.g. 198.51.100.7/32)."
+  }
+}
+
+variable "nat_public_ip" {
+  description = "The VPC's NAT egress IP (modules/network nat_public_ip); seeded into the never-block list."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.nat_public_ip == null || can(cidrhost("${var.nat_public_ip}/32", 0))
+    error_message = "nat_public_ip must be an IPv4 address."
+  }
+}
+
+variable "pb05_block_ttl_hours" {
+  description = "blockExpiresAt = block time + this. The PB-05 sweeper lifts blocks once it has passed (D15, audit A2)."
+  type        = number
+  default     = 24
+
+  validation {
+    condition     = var.pb05_block_ttl_hours >= 1 && var.pb05_block_ttl_hours <= 168 && floor(var.pb05_block_ttl_hours) == var.pb05_block_ttl_hours
+    error_message = "pb05_block_ttl_hours must be a whole number from 1 to 168."
+  }
+}
+
+variable "pb05_ip_set_max" {
+  description = "PB-05 refuses to grow an IP set beyond this many entries (WAF allows 10,000; F23)."
+  type        = number
+  default     = 1000
+
+  validation {
+    condition     = var.pb05_ip_set_max >= 1 && var.pb05_ip_set_max <= 9000 && floor(var.pb05_ip_set_max) == var.pb05_ip_set_max
+    error_message = "pb05_ip_set_max must be a whole number from 1 to 9000."
+  }
+}
+
+variable "pb05_harvest_schedule" {
+  description = "Periodic harvester trigger (on by default with PB-05). An address is published only after it is a managed key in two consecutive harvests (audit A2), so the schedule is what makes the second sighting happen. null = alarm transitions only (then few addresses ever persist)."
+  type        = string
+  default     = "rate(5 minutes)"
+
+  validation {
+    condition     = var.pb05_harvest_schedule == null || can(regex("^(rate|cron)[(].+[)]$", var.pb05_harvest_schedule))
+    error_message = "pb05_harvest_schedule must be an EventBridge rate(...) or cron(...) expression."
+  }
+}
+
+variable "pb05_harvest_min_gap_seconds" {
+  description = "Sightings of an address less than this many seconds apart count as ONE harvest (the alarm run and the scheduled run can land seconds apart)."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.pb05_harvest_min_gap_seconds >= 0 && var.pb05_harvest_min_gap_seconds <= 3600 && floor(var.pb05_harvest_min_gap_seconds) == var.pb05_harvest_min_gap_seconds
+    error_message = "pb05_harvest_min_gap_seconds must be a whole number from 0 to 3600."
+  }
+}
+
+variable "pb05_harvest_max_gap_seconds" {
+  description = "Two sightings at most this many seconds apart are consecutive harvests; a longer gap restarts the count. Default: two 5-minute harvests plus a minute of slack."
+  type        = number
+  default     = 660
+
+  validation {
+    condition     = var.pb05_harvest_max_gap_seconds >= 60 && var.pb05_harvest_max_gap_seconds <= 86400 && floor(var.pb05_harvest_max_gap_seconds) == var.pb05_harvest_max_gap_seconds && var.pb05_harvest_max_gap_seconds > var.pb05_harvest_min_gap_seconds
+    error_message = "pb05_harvest_max_gap_seconds must be a whole number from 60 to 86400 and above pb05_harvest_min_gap_seconds."
+  }
+}
+
+variable "pb05_sweep_schedule" {
+  description = "How often the PB-05 sweeper lifts blocks whose blockExpiresAt has passed (audit A2)."
+  type        = string
+  default     = "rate(15 minutes)"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^(rate|cron)[(].+[)]$", var.pb05_sweep_schedule))
+    error_message = "pb05_sweep_schedule must be an EventBridge rate(...) or cron(...) expression."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Phase D: ChatOps notifier (plan §5.1, D16). Off unless a parameter is named.
+# -----------------------------------------------------------------------------
+variable "chatops_webhook_param_name" {
+  description = "Name of an SSM SecureString (encrypted with alias/<name>-soar) holding the ChatOps webhook URL, created out of band (docs/runbooks/chatops-setup.md). \"\" = no notifier. The URL itself never enters Terraform."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  validation {
+    condition     = var.chatops_webhook_param_name == "" || (length(var.chatops_webhook_param_name) <= 1011 && can(regex("^/[A-Za-z0-9_./-]+$", var.chatops_webhook_param_name)))
+    error_message = "chatops_webhook_param_name must be \"\" or a full SSM parameter path starting with \"/\"."
+  }
+}
+
+variable "chatops_allowed_hosts" {
+  description = "Exact host names the notifier may POST to (https, port 443, no redirects). The webhook URL's host must be one of them."
+  type        = list(string)
+  default     = ["hooks.slack.com", "discord.com"]
+  nullable    = false
+
+  validation {
+    condition     = length(var.chatops_allowed_hosts) > 0 && alltrue([for h in var.chatops_allowed_hosts : can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", h))])
+    error_message = "chatops_allowed_hosts must be lowercase host names (no scheme, port, path or wildcard)."
+  }
+}

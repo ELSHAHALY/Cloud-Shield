@@ -45,6 +45,10 @@ jobs:
     name: "gate: secrets (gitleaks)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The scan's REAL outcome ('success' / 'failure'), even in fail-open mode
+    # where the job itself stays green. The image push requires 'success'.
+    outputs:
+      scan: ${{ steps.scan.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,6 +80,8 @@ jobs:
     name: "gate: sast (semgrep)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      scan: ${{ steps.scan.outcome }}   # real outcome; see the secrets job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +116,8 @@ jobs:
     name: "gate: sca (trivy fs)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      scan: ${{ steps.scan.outcome }}   # real outcome; see the secrets job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -245,6 +253,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [secrets, sast, sca]
+    permissions:
+      contents: read
+      id-token: write   # OIDC for the ECR push role (main only); scoped to this job
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -296,8 +307,69 @@ jobs:
           echo "::warning title=Image gate::Fixable CRITICAL/HIGH image CVEs. Not blocking only because ENFORCE_GATES != true."
           echo "### ⚠️ Image gate failed (fail-open mode)" >> "$GITHUB_STEP_SUMMARY"
 
-      # TODO(S1): on push to main, assume an ECR-push role via OIDC and push
-      # the scanned image by digest. Never push an image that was not scanned.
+      # Push (decision D7, F13/F14): only on a push to main, only once the push
+      # role exists (vars.AWS_ECR_PUSH_ROLE_ARN), and only when EVERY gate
+      # really passed (audit A9): this job's Trivy scan AND the secrets, SAST
+      # and SCA scans (their jobs export the scan step's outcome). A step's
+      # outcome is 'failure' whenever findings exist, even in fail-open mode
+      # (continue-on-error only keeps the job green), so a failed or skipped
+      # scan can never be pushed. The SAME local image that was scanned is
+      # pushed; ECR is IMMUTABLE, so an existing tag is left alone. CI pushes
+      # only: deploying (by digest) stays a local S1 apply.
+      - name: Configure AWS credentials (ECR push role, main only)
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          vars.AWS_ECR_PUSH_ROLE_ARN != '' &&
+          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
+          needs.secrets.outputs.scan == 'success' &&
+          needs.sast.outputs.scan == 'success' &&
+          needs.sca.outputs.scan == 'success'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gha-ecr-push-${{ github.run_id }}
+
+      - name: Push scanned image (main only)
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          vars.AWS_ECR_PUSH_ROLE_ARN != '' &&
+          steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
+          needs.secrets.outputs.scan == 'success' &&
+          needs.sast.outputs.scan == 'success' &&
+          needs.sca.outputs.scan == 'success'
+        env:
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          # ECR_REPOSITORY = terraform output ecr_repository_url
+          #   (<acct>.dkr.ecr.<region>.amazonaws.com/<name>/docs-api)
+          registry="${ECR_REPOSITORY%%/*}"
+          repo_name="${ECR_REPOSITORY#*/}"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+
+          if aws ecr describe-images --repository-name "$repo_name" \
+               --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "Tag ${GITHUB_SHA} already in ECR (immutable): not pushing again."
+          else
+            docker tag "cloudshield/app:${GITHUB_SHA}" "${ECR_REPOSITORY}:${GITHUB_SHA}"
+            docker push "${ECR_REPOSITORY}:${GITHUB_SHA}"
+          fi
+          docker logout "$registry"
+
+          aws ecr wait image-scan-complete --repository-name "$repo_name" \
+            --image-id imageTag="$GITHUB_SHA"
+          digest="$(aws ecr describe-images --repository-name "$repo_name" \
+            --image-ids imageTag="$GITHUB_SHA" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          {
+            echo "### Image pushed to ECR"
+            echo "Deploy by digest (container_image):"
+            echo '```'
+            echo "${ECR_REPOSITORY}@${digest}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Terraform plan via OIDC (read-only role). Runs only once bootstrap is done
@@ -376,6 +448,8 @@ jobs:
 
       # -I: only rules set to FAIL in .zap/rules.tsv break the build.
       # Rules marked FAIL in .zap/rules.tsv break the build (security headers).
+      # -m 1: one-minute spider, so the scan stays under the CloudFront WAF
+      # per-IP rate limit; CI gets no WAF allow-list (Phase D §6).
       - name: ZAP baseline
         id: scan
         continue-on-error: ${{ vars.ENFORCE_GATES != 'true' }}
@@ -384,7 +458,7 @@ jobs:
         run: |
           mkdir -p zap && cp .zap/rules.tsv zap/ && chmod -R 777 zap
           docker run --rm -v "$PWD/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t "$STAGING_URL" -c rules.tsv -I -r zap-report.html
+            zap-baseline.py -t "$STAGING_URL" -c rules.tsv -I -m 1 -r zap-report.html
 
       - name: Upload ZAP report
         if: always()

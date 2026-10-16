@@ -17,8 +17,8 @@ A multi-tenant document API on AWS has two defensive loops around it:
 
 | Role | Owner | Owns |
 |---|---|---|
-| **S1** Platform / Infra / CI-CD | [@ELSHAHALY](https://github.com/ELSHAHALY) | `infra/` (bootstrap, network, compute), `.github/`, edge (planned) |
-| **S2** App / Identity / Data | [@YasseenAbdelghany](https://github.com/YasseenAbdelghany) | `app/`, `modules/data`, identity (planned) |
+| **S1** Platform / Infra / CI-CD | [@ELSHAHALY](https://github.com/ELSHAHALY) | `infra/` (bootstrap, network, compute, edge), `.github/` |
+| **S2** App / Identity / Data | [@YasseenAbdelghany](https://github.com/YasseenAbdelghany) | `app/`, `modules/data`, `modules/identity` |
 | **S3** SecOps / SOAR / Forensics | [@ahklsfg](https://github.com/ahklsfg) | `soar/`, `detection/`, `attack-sim/`, `modules/soar`, `modules/log-archive` |
 
 [CODEOWNERS](.github/CODEOWNERS) enforces this. Cross-domain, security-critical paths need two owners: the pipeline, the environment composition, the quarantine security group and the forensic worker.
@@ -41,7 +41,12 @@ infra/terraform/
     data/          TB3           DynamoDB documents + append-only audit (PITR), documents bucket, KMS
     log-archive/   TB5           KMS-encrypted log archive (flow-log delivery wired)
     soar/          TB5           SNS, incidents table, evidence bucket, dry-run switch, GuardDuty rule
-                                 [flag] 4 Lambdas + Step Functions cs-ir-router
+                                 [flag] guard + PB-01..05 Lambdas + Step Functions cs-ir-router,
+                                 PB-05 edge bus + harvester, ChatOps notifier
+    identity/      TB1           Cognito user pool (TOTP MFA, immutable tenant claim), SPA client, 4 groups
+    edge/          TB1           [flag] CloudFront + SPA bucket, CloudFront and regional WAF,
+                                 PB-05 IP sets, REST API + VPC Link + Cognito authorizer
+    detection/     TB5           GuardDuty, CloudTrail, Config, Athena/Glue (+ waf_logs)
     */tests/                     offline `terraform test` suites (mocked AWS provider)
   environments/dev/              composes the modules — one banner per owner
 app/            S2 — Express API + React SPA
@@ -57,11 +62,11 @@ docs/adr/       architecture decision records
 | Boundary | Zone | Lives in |
 |---|---|---|
 | TB0 | Internet (untrusted): users, adversary | — |
-| TB1 | AWS edge (semi-trusted): WAF + CloudFront / API Gateway, Cognito | `edge`, `identity` (planned) |
+| TB1 | AWS edge (semi-trusted): WAF + CloudFront / API Gateway, Cognito | `edge` (built, behind `enable_edge`), `identity` (built) · [ADR-0004](docs/adr/0004-edge-identity-waf.md) |
 | TB2 | VPC private subnets (trusted compute): docs-api task, report-worker EC2 | `network`, `compute` |
 | TB3 | AWS data plane (data at rest): DynamoDB, S3 docs | `data` |
 | TB4 | Supply chain: npm registry, GitHub repo + Actions, ECR | `.github/`, `compute` (ECR) |
-| TB5 | Security account (highest trust): SOAR + evidence | `soar`, `log-archive`, `detection` (planned) |
+| TB5 | Security account (highest trust): SOAR + evidence | `soar`, `log-archive`, `detection` |
 
 ### Feature flags: what exists by default
 
@@ -71,8 +76,11 @@ Code-dependent resources are written in full but **off** until their artifact ex
 |---|---|---|
 | `container_image` | `null` | Internal NLB, task definition, Fargate service (image **must** be `…@sha256:` digest-pinned) |
 | `enable_report_worker` | `false` | EC2 forensic target carrying the SOAR scope tag |
-| `soar_playbook_package` | `null` | Safety guard + PB-01/02/03 Lambdas and the `cs-ir-router` state machine. Until then GuardDuty findings go **straight to SNS email**. |
+| `soar_playbook_package` | `null` | Safety guard + PB-01/02/03 Lambdas and the `cs-ir-router` state machine. Until then GuardDuty findings go **straight to SNS email**. PB-04, PB-05 and the notifier also need it. |
 | `soar_dry_run` | `true` | `false` = playbooks really act |
+| `enable_edge` | `false` | CloudFront, the CloudFront and regional WAFs (≈ US$20/month), the SPA bucket and WAF logging; the REST API too when `container_image` is set; and **PB-05** (edge bus, harvester + sighting table, never-block list, auto-expiry sweeper) when the package is set. **Requires `aws_region = us-east-1`** ([ADR-0004](docs/adr/0004-edge-identity-waf.md)). |
+| `soar_scope_app_service` | `false` | The SOAR scope tag on the docs-api ECS service and its tasks. **PB-04** exists only with this, a container image and `guardduty_runtime_monitoring = true` (paid) ([ADR-0005](docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md)). |
+| `chatops_webhook_param_name` | `""` | The ChatOps notifier, subscribed to the incidents topic. Name an SSM SecureString you created with the SOAR key ([runbook](docs/runbooks/chatops-setup.md)); the URL never enters Terraform. |
 | `allow_worker_lab_scan` | `false` | LAB ONLY: worker egress to all VPC ports, for scenario A |
 
 ---
@@ -123,6 +131,18 @@ terraform destroy
 ```
 
 Leave `bootstrap/` up: it costs cents.
+
+**Phase D costs** (lab, us-east-1, plan §8):
+
+| Item | Approximate cost | Default |
+|---|---|---|
+| WAF: 2 web ACLs ($5 each) + 10 rules ($1 each, incl. the `/api/*` PB-05 rate rule) + $0.60 per million requests; IP sets have no listed charge [inferred] | **≈ $20/month** with no traffic | off (`enable_edge`) |
+| CloudFront / REST API / WAF logs / edge KMS key | free tier / $3.50 per million calls / cents / $1 per month | with `enable_edge` |
+| CloudWatch alarm (PB-05 harvester) | $0.10/month | with PB-05 |
+| Dedicated edge bus; PB-04, PB-05, harvester, sweeper and notifier Lambdas; the on-demand sighting table | free tier at lab volume | flags |
+| GuardDuty Runtime Monitoring (PB-04 prerequisite) | per vCPU-hour after the trial | **off** |
+| Cognito Essentials (TOTP) | free tier for lab MAU | **on** |
+| LLM summary in the IR report | provider-billed, per run, opt-in only | off |
 
 **GuardDuty must be enabled** for the SOAR rule to receive anything. Until the `detection` module exists, run:
 
@@ -248,7 +268,7 @@ An independent review agent audited commit `ea39d48` and returned **PASS WITH FI
 
 - [ ] **G1:** written ministry waiver for the 3-person team (risk R1, rated H×H).
 - [ ] **S1:** apply `bootstrap/` and `environments/dev`, invite collaborators, set variables and branch protection, run `scripts/gate-selftest.sh`, then set `ENFORCE_GATES=true`.
-- [ ] **S1:** `edge` module: REST API Gateway + VPC Link → `module.compute.nlb_arn`, WAF ×2, CloudFront. Add an ECR push role (OIDC, `main` only, push by digest).
-- [ ] **S2:** `app/openapi.yaml`, then `app/docs-api/` with `Dockerfile` and `/healthz`, then the `identity` module (Cognito).
+- [x] **S1:** `edge` module: REST API Gateway + VPC Link → `module.compute.nlb_arn`, WAF ×2, CloudFront. ECR push role (OIDC, `main` only, push by digest). Phase D; verify-on-apply items in ADR-0004.
+- [ ] **S2:** `app/openapi.yaml`, then `app/docs-api/` with `Dockerfile` and `/healthz` (token contract in `app/README.md`). The `identity` module (Cognito) is built (Phase D).
 - [ ] **S3:** `soar/safety_guard` with pytest **first**, then PB-01, then build the zip and set `soar_playbook_package` with `soar_dry_run=true`. Run scenario A, then flip dry-run off.
 - [ ] **S3:** `detection` module: GuardDuty detector, CloudTrail with S3 data events, Glue tables, an Athena workgroup with a scan cap, and Config rules.

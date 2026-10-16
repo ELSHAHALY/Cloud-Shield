@@ -16,6 +16,7 @@ The detection layer behind the SOAR engine: what sees the attack, and what the a
 | AWS Config | **on** | Recorder scoped to `AWS::S3::Bucket` (cost), plus `S3_BUCKET_PUBLIC_READ_PROHIBITED` and `S3_BUCKET_PUBLIC_WRITE_PROHIBITED`. NON_COMPLIANT results notify the analyst via the SOAR SNS topic. |
 | Security Hub (+ CIS v3.0.0, PCI DSS v3.2.1) | off | Per-check cost; its controls need Config to record more than S3. Toggle per flag. |
 | Athena `cs-forensics` workgroup | **on** | Settings **enforced**: a 1 GiB per-query scan cap and KMS-encrypted results. Glue catalog (`<name>_forensics`) with partition projection for `cloudtrail`, `vpc_flow_logs` and `guardduty_findings` — no crawlers, no `MSCK REPAIR`. |
+| Glue table `waf_logs` (Phase D) | with `enable_edge` | Both web ACLs' logs in the `aws-waf-logs-<name>-<acct>` bucket (`modules/log-archive`, archive key; `authorization`, `cookie` and `x-origin-verify` redacted). Columns follow AWS's WAF DDL; partition projection on `waf_region` (`cloudfront`, `<region>`), `webacl` (the two ACL names) and `log_time` (`yyyy/MM/dd/HH/mm`, 1-minute interval). |
 
 ## Scenario C: containment vs. notification
 
@@ -44,6 +45,7 @@ Parameterised with Athena `?` placeholders — run them with `PREPARE` / `EXECUT
 | `01_attacker_timeline_by_principal.sql` | T1078, T1552.001/005 | A, B | Every CloudTrail call by an access key / principal / source IP, oldest first. |
 | `02_imds_and_recon_flow.sql` | T1046, T1552.005 | A | Per-minute scan shape (flow logs) next to the worker role's API calls from a foreign IP. |
 | `03_s3_public_exposure_audit.sql` | T1530 | C | Exposure changes and object access on the bucket during the window, with external access flagged. |
+| `04_waf_blocked_requests_by_client.sql` | T1190, T1595, T1499 | QA, E | Every request the WAFs did not simply allow, per client IP / ACL / terminating rule / action: counts, first and last seen, sample URIs, the IPs the rate rule was limiting (what the PB-05 harvester publishes) and `SoarBlockedIps` hits (a PB-05 block taking effect). Parameters: the first and last `log_time` minute. On the regional ACL the client IP is CloudFront's (use the `cloudfront` rows). |
 
 `soar/tools/generate_ir_report.py` builds the per-incident chain-of-custody report (FR-8); see `soar/sims/README.md` for the simulation harness that produces the incidents these queries read.
 

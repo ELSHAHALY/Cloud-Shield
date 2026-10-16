@@ -44,6 +44,61 @@ variable "allow_worker_lab_scan" {
   default     = false
 }
 
+variable "enable_edge" {
+  description = "CloudFront + both WAFs + SPA bucket (+ REST API when container_image is set) and WAF logging. ~US$20/month for the WAFs (2 ACLs + 10 rules). Requires aws_region = us-east-1."
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "Requests per client IP per 5 minutes before CloudFront's WAF answers 429 (site-wide; never a PB-05 block)."
+  type        = number
+  default     = 300
+}
+
+variable "waf_api_rate_limit" {
+  description = "Requests per client IP per 5 minutes to /api/* before the PB-05-feeding SoarApiRateLimit rule answers 429. An address must stay over it for two consecutive harvests before PB-05 may block it."
+  type        = number
+  default     = 200
+}
+
+variable "manage_apigw_account_role" {
+  description = "Manage the account-level API Gateway CloudWatch role (regional singleton). false if the account already has one."
+  type        = bool
+  default     = true
+}
+
+variable "github_oidc_provider_arn" {
+  description = "bootstrap output github_oidc_provider_arn. null = no CI ECR push role."
+  type        = string
+  default     = null
+}
+
+variable "github_repository" {
+  description = "owner/repo whose main-branch workflow may push images (exact match)."
+  type        = string
+  default     = "ELSHAHALY/Cloud-Shield"
+}
+
+variable "soar_scope_app_service" {
+  description = "Put the SOAR scope tag on the docs-api service and its tasks (PB-04 targets). Off by default."
+  type        = bool
+  default     = false
+}
+
+# ---------------- S2 ----------------
+variable "cognito_mfa_configuration" {
+  description = "ON (default) or OPTIONAL. OFF is rejected by modules/identity."
+  type        = string
+  default     = "ON"
+}
+
+variable "cognito_deletion_protection" {
+  description = "Block deleting the user pool. false in the lab so nightly teardown works; set true before real users exist."
+  type        = bool
+  default     = false
+}
+
 # ---------------- S3 ----------------
 variable "log_archive_force_destroy" {
   description = "true in the lab so teardown works; set false before the final demo if evidence must survive."
@@ -130,4 +185,11 @@ variable "soar_playbook_package" {
     s3_object_version = optional(string)
   })
   default = null
+}
+
+variable "chatops_webhook_param_name" {
+  description = "SSM SecureString holding the ChatOps webhook URL, created out of band with the SOAR key (docs/runbooks/chatops-setup.md). \"\" = no notifier. Needs soar_playbook_package."
+  type        = string
+  default     = ""
+  nullable    = false
 }
