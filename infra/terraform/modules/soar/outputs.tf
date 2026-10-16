@@ -71,3 +71,13 @@ output "notifier_function_name" {
   description = "ChatOps notifier Lambda. null unless chatops_webhook_param_name is set (and the playbook package exists)."
   value       = one(aws_lambda_function.notifier[*].function_name)
 }
+
+output "pb05_sweeper_function_name" {
+  description = "Lifts expired PB-05 blocks on a schedule (audit A2). null without enable_pb05."
+  value       = one(aws_lambda_function.sweeper[*].function_name)
+}
+
+output "pb05_harvest_state_table_name" {
+  description = "Per-address sighting counters (>= 2 consecutive harvests before a publish). null without enable_pb05."
+  value       = one(aws_dynamodb_table.harvest_state[*].name)
+}

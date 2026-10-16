@@ -19,12 +19,13 @@ SOAR_TF = REPO / "infra" / "terraform" / "modules" / "soar"
 PLAYBOOKS_TF = SOAR_TF / "playbooks.tf"
 EDGE_BUS_TF = SOAR_TF / "edge-bus.tf"
 NOTIFY_TF = SOAR_TF / "notify.tf"
+SWEEPER_TF = SOAR_TF / "pb05-sweeper.tf"
 
 
 def tf_handlers() -> list[str]:
     return [
         handler
-        for tf in (PLAYBOOKS_TF, EDGE_BUS_TF, NOTIFY_TF)
+        for tf in (PLAYBOOKS_TF, EDGE_BUS_TF, NOTIFY_TF, SWEEPER_TF)
         for handler in re.findall(r'handler\s*=\s*"([^"]+)"', tf.read_text(encoding="utf-8"))
     ]
 
@@ -47,11 +48,13 @@ def tf_env_vars() -> set[str]:
 
 def test_every_terraform_handler_resolves() -> None:
     handlers = tf_handlers()
-    # safety guard, PB-01..PB-05, the PB-05 harvester and the ChatOps notifier
-    assert len(handlers) == 8
+    # safety guard, PB-01..PB-05, the PB-05 harvester and sweeper, and the
+    # ChatOps notifier
+    assert len(handlers) == 9
     assert "playbooks.pb04_ecs_task_contain.lambda_handler" in handlers
     assert "playbooks.pb05_waf_ip_block.lambda_handler" in handlers
     assert "playbooks.pb05_waf_ip_block.harvest_handler" in handlers
+    assert "playbooks.pb05_unblock_sweeper.lambda_handler" in handlers
     assert "notifier.handler.lambda_handler" in handlers
     for handler in handlers:
         module, function = handler.rsplit(".", 1)
@@ -78,6 +81,9 @@ def test_settings_reads_every_variable_terraform_sets() -> None:
         "WAF_REGION",
         "NEVER_BLOCK_PARAM",
         "EDGE_EVENT_SOURCE",
+        "WAF_WEB_ACL_NAME",
+        "WAF_WEB_ACL_ID",
+        "WAF_RATE_RULE_NAME",
     }
     # SCOPE_TAG_PARAM is set for operators; the code reads the same tag from env.
     assert tf_env_vars() - {"SCOPE_TAG_PARAM"} == read_by_code
@@ -94,10 +100,24 @@ def test_harvester_reads_every_variable_terraform_sets() -> None:
         "WAF_RATE_RULE_NAME",
         "WAF_SCOPE",
         "WAF_REGION",
+        "HARVEST_STATE_TABLE",
+        "HARVEST_MIN_GAP_SECONDS",
+        "HARVEST_MAX_GAP_SECONDS",
     }
     assert lambda_env_block(EDGE_BUS_TF) == read_by_code
-    settings = HarvestSettings.from_env(dict.fromkeys(read_by_code, "CLOUDFRONT"))
+    env = dict.fromkeys(read_by_code, "CLOUDFRONT")
+    env.update(HARVEST_MIN_GAP_SECONDS="60", HARVEST_MAX_GAP_SECONDS="660")
+    settings = HarvestSettings.from_env(env)
     assert settings.scope == "CLOUDFRONT"
+
+
+def test_sweeper_reads_every_variable_terraform_sets() -> None:
+    from playbooks.pb05_unblock_sweeper import SweeperSettings
+
+    read_by_code = {"INCIDENTS_TABLE", "BLOCK_IP_SET_ARNS", "WAF_REGION"}
+    assert lambda_env_block(SWEEPER_TF) == read_by_code
+    settings = SweeperSettings.from_env(dict.fromkeys(read_by_code, "x"))
+    assert settings.block_ip_set_arns == ("x",)
 
 
 def test_notifier_reads_every_variable_terraform_sets() -> None:
@@ -149,6 +169,11 @@ def test_settings_defaults_and_lists() -> None:
     assert settings.waf_region == ""
     assert settings.never_block_param == ""
     assert settings.edge_event_source == ""
+    assert (settings.waf_web_acl_name, settings.waf_web_acl_id, settings.waf_rate_rule_name) == (
+        "",
+        "",
+        "",
+    )
 
 
 def test_settings_phase_d_values() -> None:

@@ -129,11 +129,12 @@ run "cloudfront_acl_rules_and_pb05_ip_sets" {
     condition = { for r in aws_wafv2_web_acl.cloudfront.rule : tostring(r.priority) => r.name } == {
       "0" = "SoarBlockedIps"
       "1" = "AWSManagedRulesAmazonIpReputationList"
-      "2" = "RateLimitPerIp"
-      "3" = "AWSManagedRulesCommonRuleSet"
-      "4" = "AWSManagedRulesKnownBadInputsRuleSet"
+      "2" = "SoarApiRateLimit"
+      "3" = "RateLimitPerIp"
+      "4" = "AWSManagedRulesCommonRuleSet"
+      "5" = "AWSManagedRulesKnownBadInputsRuleSet"
     }
-    error_message = "CloudFront ACL rules and priorities must be exactly D4 (PB-05 list first)."
+    error_message = "CloudFront ACL rules and priorities must be exactly D4 (PB-05 list first, then the PB-05 /api/* rate rule before the site-wide one)."
   }
   assert {
     condition = toset([
@@ -169,13 +170,38 @@ run "cloudfront_acl_rules_and_pb05_ip_sets" {
     )
     error_message = "Rate rule: 300 requests per IP per 300 s, blocked with 429."
   }
+  # PB-05 feed (audit A2): its own rate rule, scoped down to /api/*.
   assert {
-    condition     = alltrue([for r in aws_wafv2_web_acl.cloudfront.rule : r.visibility_config[0].cloudwatch_metrics_enabled && r.visibility_config[0].sampled_requests_enabled])
-    error_message = "Metrics and sampled requests on every rule."
+    condition = (
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).action[0].block[0].custom_response[0].response_code == 429 &&
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].limit == 200 &&
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].aggregate_key_type == "IP" &&
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].evaluation_window_sec == 300 &&
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].scope_down_statement[0].byte_match_statement[0].search_string == "/api/" &&
+      one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].scope_down_statement[0].byte_match_statement[0].positional_constraint == "STARTS_WITH" &&
+      length(one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "SoarApiRateLimit"]).statement[0].rate_based_statement[0].scope_down_statement[0].byte_match_statement[0].field_to_match[0].uri_path) == 1
+    )
+    error_message = "SoarApiRateLimit: 200 requests per IP per 300 s on URI paths starting /api/, blocked with 429."
   }
   assert {
-    condition     = output.block_ip_set_arns.v4 == aws_wafv2_ip_set.soar_blocked_v4.arn && output.block_ip_set_arns.v6 == aws_wafv2_ip_set.soar_blocked_v6.arn && output.rate_rule_name == "RateLimitPerIp"
-    error_message = "PB-05 outputs: both IP-set ARNs and the rate rule name."
+    condition     = length(one([for r in aws_wafv2_web_acl.cloudfront.rule : r if r.name == "RateLimitPerIp"]).statement[0].rate_based_statement[0].scope_down_statement) == 0
+    error_message = "RateLimitPerIp stays site-wide (no scope-down)."
+  }
+  # Audit A7: sampled requests carry request headers (ID tokens); off, metrics on.
+  assert {
+    condition = alltrue(concat(
+      [for r in aws_wafv2_web_acl.cloudfront.rule : r.visibility_config[0].cloudwatch_metrics_enabled && !r.visibility_config[0].sampled_requests_enabled],
+      [aws_wafv2_web_acl.cloudfront.visibility_config[0].cloudwatch_metrics_enabled && !aws_wafv2_web_acl.cloudfront.visibility_config[0].sampled_requests_enabled],
+    ))
+    error_message = "Metrics on and sampled requests OFF on every CloudFront ACL rule and the ACL itself."
+  }
+  assert {
+    condition     = output.block_ip_set_arns.v4 == aws_wafv2_ip_set.soar_blocked_v4.arn && output.block_ip_set_arns.v6 == aws_wafv2_ip_set.soar_blocked_v6.arn && output.rate_rule_name == "RateLimitPerIp" && output.soar_rate_rule_name == "SoarApiRateLimit"
+    error_message = "PB-05 outputs: both IP-set ARNs, the site-wide rule name and the PB-05 feed rule name."
+  }
+  assert {
+    condition     = output.spa_bucket_arn == aws_s3_bucket.spa.arn
+    error_message = "The SPA bucket ARN is output (dev adds it to the CloudTrail data-event list)."
   }
   assert {
     condition     = toset([for f in aws_wafv2_web_acl_logging_configuration.cloudfront.redacted_fields : f.single_header[0].name]) == toset(["authorization", "cookie", "x-origin-verify"])
@@ -308,6 +334,13 @@ run "api_chain_when_enabled" {
     error_message = "The regional ACL is associated with the v1 stage."
   }
   assert {
+    condition = alltrue(concat(
+      [for r in aws_wafv2_web_acl.api[0].rule : r.visibility_config[0].cloudwatch_metrics_enabled && !r.visibility_config[0].sampled_requests_enabled],
+      [!aws_wafv2_web_acl.api[0].visibility_config[0].sampled_requests_enabled],
+    ))
+    error_message = "Regional ACL: metrics on, sampled requests OFF (audit A7)."
+  }
+  assert {
     condition     = toset([for f in aws_wafv2_web_acl_logging_configuration.api[0].redacted_fields : f.single_header[0].name]) == toset(["authorization", "cookie", "x-origin-verify"])
     error_message = "Regional WAF logs must redact authorization, cookie and x-origin-verify (D8)."
   }
@@ -376,10 +409,11 @@ run "rejects_rate_limit_below_waf_minimum" {
   command = plan
 
   variables {
-    waf_rate_limit = 5
+    waf_rate_limit     = 5
+    waf_api_rate_limit = 9
   }
 
-  expect_failures = [var.waf_rate_limit]
+  expect_failures = [var.waf_rate_limit, var.waf_api_rate_limit]
 }
 
 run "api_needs_nlb_and_user_pool" {

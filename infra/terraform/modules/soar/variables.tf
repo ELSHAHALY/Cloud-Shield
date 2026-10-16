@@ -216,9 +216,9 @@ variable "waf_web_acl" {
 }
 
 variable "waf_rate_rule_name" {
-  description = "PB-05 harvester: name of the per-IP rate-based rule (modules/edge rate_rule_name)."
+  description = "The PB-05-feeding rate rule (modules/edge soar_rate_rule_name: /api/* only). The harvester reads its managed keys, PB-05 corroborates every block against them, and the alarm watches it. Never the site-wide RateLimitPerIp (audit A2)."
   type        = string
-  default     = "RateLimitPerIp"
+  default     = "SoarApiRateLimit"
 }
 
 variable "pb05_publisher_arns" {
@@ -255,7 +255,7 @@ variable "nat_public_ip" {
 }
 
 variable "pb05_block_ttl_hours" {
-  description = "blockExpiresAt = block time + this. Nothing lifts a block automatically (D15)."
+  description = "blockExpiresAt = block time + this. The PB-05 sweeper lifts blocks once it has passed (D15, audit A2)."
   type        = number
   default     = 24
 
@@ -277,13 +277,47 @@ variable "pb05_ip_set_max" {
 }
 
 variable "pb05_harvest_schedule" {
-  description = "Optional extra harvester trigger, e.g. \"rate(5 minutes)\", for IPs that become rate-limited while the alarm is already in ALARM. null = alarm transitions only."
+  description = "Periodic harvester trigger (on by default with PB-05). An address is published only after it is a managed key in two consecutive harvests (audit A2), so the schedule is what makes the second sighting happen. null = alarm transitions only (then few addresses ever persist)."
   type        = string
-  default     = null
+  default     = "rate(5 minutes)"
 
   validation {
     condition     = var.pb05_harvest_schedule == null || can(regex("^(rate|cron)[(].+[)]$", var.pb05_harvest_schedule))
     error_message = "pb05_harvest_schedule must be an EventBridge rate(...) or cron(...) expression."
+  }
+}
+
+variable "pb05_harvest_min_gap_seconds" {
+  description = "Sightings of an address less than this many seconds apart count as ONE harvest (the alarm run and the scheduled run can land seconds apart)."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.pb05_harvest_min_gap_seconds >= 0 && var.pb05_harvest_min_gap_seconds <= 3600 && floor(var.pb05_harvest_min_gap_seconds) == var.pb05_harvest_min_gap_seconds
+    error_message = "pb05_harvest_min_gap_seconds must be a whole number from 0 to 3600."
+  }
+}
+
+variable "pb05_harvest_max_gap_seconds" {
+  description = "Two sightings at most this many seconds apart are consecutive harvests; a longer gap restarts the count. Default: two 5-minute harvests plus a minute of slack."
+  type        = number
+  default     = 660
+
+  validation {
+    condition     = var.pb05_harvest_max_gap_seconds >= 60 && var.pb05_harvest_max_gap_seconds <= 86400 && floor(var.pb05_harvest_max_gap_seconds) == var.pb05_harvest_max_gap_seconds && var.pb05_harvest_max_gap_seconds > var.pb05_harvest_min_gap_seconds
+    error_message = "pb05_harvest_max_gap_seconds must be a whole number from 60 to 86400 and above pb05_harvest_min_gap_seconds."
+  }
+}
+
+variable "pb05_sweep_schedule" {
+  description = "How often the PB-05 sweeper lifts blocks whose blockExpiresAt has passed (audit A2)."
+  type        = string
+  default     = "rate(15 minutes)"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^(rate|cron)[(].+[)]$", var.pb05_sweep_schedule))
+    error_message = "pb05_sweep_schedule must be an EventBridge rate(...) or cron(...) expression."
   }
 }
 

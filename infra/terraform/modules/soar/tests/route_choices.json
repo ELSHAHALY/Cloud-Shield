@@ -1,0 +1,68 @@
+[
+  {
+    "And": [
+      {
+        "StringMatches": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*",
+        "Variable": "$.detail.type"
+      },
+      {
+        "StringEquals": "AccessKey",
+        "Variable": "$.detail.resource.resourceType"
+      }
+    ],
+    "Next": "PB01Isolate"
+  },
+  {
+    "Next": "PB01Isolate",
+    "StringEquals": "Instance",
+    "Variable": "$.detail.resource.resourceType"
+  },
+  {
+    "Next": "PB02Revoke",
+    "StringEquals": "AccessKey",
+    "Variable": "$.detail.resource.resourceType"
+  },
+  {
+    "And": [
+      {
+        "StringEquals": "S3Bucket",
+        "Variable": "$.detail.resource.resourceType"
+      },
+      {
+        "StringMatches": "Policy:S3/Bucket*",
+        "Variable": "$.detail.type"
+      }
+    ],
+    "Next": "PB03Restore"
+  },
+  {
+    "And": [
+      {
+        "StringEquals": "ECSCluster",
+        "Variable": "$.detail.resource.resourceType"
+      },
+      {
+        "StringMatches": "*:Runtime/*",
+        "Variable": "$.detail.type"
+      }
+    ],
+    "Next": "PB04Contain"
+  },
+  {
+    "And": [
+      {
+        "IsPresent": true,
+        "Variable": "$.source"
+      },
+      {
+        "StringEquals": "cloudshield.edge",
+        "Variable": "$.source"
+      },
+      {
+        "StringEquals": "IPAddress",
+        "Variable": "$.detail.resource.resourceType"
+      }
+    ],
+    "Next": "PB05Block"
+  }
+]

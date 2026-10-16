@@ -112,6 +112,7 @@ module "edge" {
 
   waf_log_bucket_arn        = module.log_archive.waf_log_bucket_arn
   waf_rate_limit            = var.waf_rate_limit
+  waf_api_rate_limit        = var.waf_api_rate_limit
   manage_apigw_account_role = var.manage_apigw_account_role
 }
 
@@ -180,10 +181,11 @@ module "soar" {
 
   # PB-05: on with the edge. The WAF lives in this (us-east-1) region (F17
   # fallback), so the soar module's own us-east-1 precondition applies too.
-  enable_pb05        = var.enable_edge
-  block_ip_set_arns  = var.enable_edge ? values(module.edge[0].block_ip_set_arns) : []
-  waf_web_acl        = var.enable_edge ? module.edge[0].cloudfront_web_acl : null
-  waf_rate_rule_name = var.enable_edge ? module.edge[0].rate_rule_name : "RateLimitPerIp"
+  enable_pb05       = var.enable_edge
+  block_ip_set_arns = var.enable_edge ? values(module.edge[0].block_ip_set_arns) : []
+  waf_web_acl       = var.enable_edge ? module.edge[0].cloudfront_web_acl : null
+  # Only the /api/*-scoped rule feeds PB-05 (audit A2); RateLimitPerIp is 429-only.
+  waf_rate_rule_name = var.enable_edge ? module.edge[0].soar_rate_rule_name : "SoarApiRateLimit"
   nat_public_ip      = module.network.nat_public_ip
 
   # ChatOps notifier (plan §5.1): off unless an operator-created SecureString
@@ -200,10 +202,12 @@ module "detection" {
   log_archive_kms_key_arn = module.log_archive.kms_key_arn
 
   cloudtrail_trail_name = local.trail_name
-  # Object-level audit of the sensitive buckets (gap 16) + the lab bucket.
+  # Object-level audit of the sensitive buckets (gap 16), the lab bucket, and
+  # the SPA bucket (the edge's CKV_AWS_18 compensating control, audit A8).
   data_event_bucket_arns = concat(
     [module.soar.evidence_bucket_arn, module.data.documents_bucket_arn],
     var.enable_lab_targets ? [module.lab_targets[0].lab_bucket_arn] : [],
+    var.enable_edge ? [module.edge[0].spa_bucket_arn] : [],
   )
   cloudtrail_regions = distinct([var.aws_region, "us-east-1"])
 

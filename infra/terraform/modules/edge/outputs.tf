@@ -25,7 +25,7 @@ output "kms_key_arn" {
 }
 
 output "cloudfront_web_acl" {
-  description = "PB-05 harvester target (stage 2b)."
+  description = "PB-05 harvester and corroboration target."
   value = {
     name = aws_wafv2_web_acl.cloudfront.name
     id   = aws_wafv2_web_acl.cloudfront.id
@@ -44,8 +44,18 @@ output "web_acl_names" {
 }
 
 output "rate_rule_name" {
-  description = "Name of the per-IP rate-based rule on the CloudFront ACL (PB-05 harvester)."
+  description = "Name of the site-wide per-IP rate rule (429 only; NOT harvested by PB-05)."
   value       = local.rate_rule_name
+}
+
+output "soar_rate_rule_name" {
+  description = "Name of the /api/*-scoped rate rule that feeds PB-05 (harvester, corroboration, alarm)."
+  value       = local.soar_rate_rule_name
+}
+
+output "spa_bucket_arn" {
+  description = "SPA bucket ARN (CloudTrail S3 data events in modules/detection, the CKV_AWS_18 compensating control)."
+  value       = aws_s3_bucket.spa.arn
 }
 
 output "block_ip_set_arns" {

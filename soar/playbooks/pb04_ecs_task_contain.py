@@ -3,9 +3,11 @@
 action "contain" runs BEFORE CONTAINED (Lambda timeout 55 s):
   1. re-check the scope (defence in depth: guard + IAM + code): the LIVE task
      is in ECS_CLUSTER_ARN, carries the scope tag, and belongs to an allowed
-     service, which also carries the scope tag. The task's `startedBy` must be
-     one of that service's deployment ids: that proves the task belongs to the
-     service, so a forged `group` cannot get the wrong service redeployed.
+     service, which also carries the scope tag. Membership is proven by ECS
+     itself (audit A4): ListTasks(cluster, serviceName) must contain the task
+     ARN (desired RUNNING, else desired STOPPED, which ECS keeps listing for
+     about an hour). A forged `group` or `startedBy` therefore cannot get the
+     wrong service redeployed.
   2. capture the task (definition ARN, images + digests, ENI and private IP,
      start time) and its task definition, in memory, BEFORE anything changes.
      The definition read is best-effort and short: evidence never blocks
@@ -74,7 +76,7 @@ class Pb04EcsTaskContain(Playbook):
             return [f"store the pre-state of {task} as hashed evidence (after CONTAINED)"]
         return [
             f"re-check scope of {task} and of service {service}; "
-            "require the task's startedBy among the service's deployments",
+            f"require {task} in ListTasks(serviceName={service})",
             f"capture task metadata and task definition of {task}",
             f"StopTask {task}",
             f"UpdateService {service} forceNewDeployment (replace sibling tasks)",
@@ -118,12 +120,12 @@ class Pb04EcsTaskContain(Playbook):
         service = self._service(ecs, cluster, service_name)
         if not self._in_scope(service):
             raise PlaybookError(f"service {service_name} lacks the SOAR scope tag")
+        if not self._service_lists_task(ecs, cluster, service_name, target.task_arn):
+            raise PlaybookError(
+                f"ECS does not list the task under service {service_name}; refusing"
+            )
         started_by = task.get("startedBy")
         deployments = service.get("deployments", [])
-        if not started_by or started_by not in {d.get("id") for d in deployments}:
-            raise PlaybookError(
-                f"task was not started by a deployment of service {service_name}; refusing"
-            )
 
         # 2. capture BEFORE any change.
         prestate = self._prestate(task, cluster)
@@ -196,6 +198,18 @@ class Pb04EcsTaskContain(Playbook):
         return tasks[0] if len(tasks) == 1 else None
 
     @staticmethod
+    def _service_lists_task(ecs: Any, cluster: str, service_name: str, task_arn: str) -> bool:
+        """ECS's own answer to "is this task one of the service's tasks?"."""
+        paginator = ecs.get_paginator("list_tasks")
+        for desired in ("RUNNING", "STOPPED"):
+            for page in paginator.paginate(
+                cluster=cluster, serviceName=service_name, desiredStatus=desired
+            ):
+                if task_arn in page.get("taskArns", []):
+                    return True
+        return False
+
+    @staticmethod
     def _service(ecs: Any, cluster: str, service_name: str) -> dict[str, Any]:
         services = ecs.describe_services(
             cluster=cluster, services=[service_name], include=["TAGS"]
@@ -206,7 +220,7 @@ class Pb04EcsTaskContain(Playbook):
 
     @staticmethod
     def _fresh_primary(
-        deployments: list[dict[str, Any]], finding: Finding, started_by: str
+        deployments: list[dict[str, Any]], finding: Finding, started_by: str | None
     ) -> dict[str, Any] | None:
         """A PRIMARY deployment created at or after the finding's event time,
         and not the deployment that launched the compromised task."""

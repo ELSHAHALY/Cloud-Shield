@@ -88,11 +88,19 @@ class Playbook(ABC):
         clients: aws.ClientFactory = aws.client,
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], None] = time.sleep,
+        *,
+        dry_run_reader: Callable[[], bool | None] | None = None,
     ) -> None:
         self.settings = settings
         self.clients = clients
         self.clock = clock
         self.sleep = sleep
+        # Default: a fresh read of the SSM switch on every invocation. The
+        # local replay of the dry-run-only scenarios D/E passes `lambda: True`
+        # so flipping the switch mid-run cannot make them act (audit A10).
+        self._dry_run_reader = dry_run_reader or (
+            lambda: read_dry_run(self.clients("ssm"), self.settings.dry_run_param)
+        )
         self.incidents = IncidentRepository(settings.incidents_table, clients("dynamodb"))
 
     @classmethod
@@ -129,7 +137,7 @@ class Playbook(ABC):
         decision = guard.get("decision") if isinstance(guard, dict) else None
         if not isinstance(decision, dict) or decision.get("dry_run") is not False:
             return False
-        return read_dry_run(self.clients("ssm"), self.settings.dry_run_param) is False
+        return self._dry_run_reader() is False
 
     # ---------------------------------------------------------- for subclasses
     @abstractmethod

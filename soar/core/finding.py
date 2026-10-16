@@ -23,6 +23,13 @@ S3_EXPOSURE_PREFIX = "Policy:S3/Bucket"
 EDGE_SOURCE = "cloudshield.edge"
 IP_RESOURCE_TYPE = "IPAddress"
 ECS_RESOURCE_TYPE = "ECSCluster"
+# Edge finding types (audit A1, A5). The edge-bus rule only forwards types with
+# this prefix, and the guard and PB-05 accept only the explicit allow-list:
+# each allowed type must have a corroboration check in PB-05 (the rate-limit
+# type is corroborated with WAF's own managed keys). Phase E adds its own.
+EDGE_TYPE_PREFIX = "CloudShield:IPAddress/"
+EDGE_RATE_FINDING_TYPE = "CloudShield:IPAddress/WafRateLimitExceeded"
+EDGE_FINDING_TYPES = frozenset({EDGE_RATE_FINDING_TYPE})
 
 _INSTANCE_ID = re.compile(r"^i-(?:[0-9a-f]{8}|[0-9a-f]{17})$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")
@@ -205,8 +212,10 @@ def _resolve_target(source: str, finding_type: str, resource: dict[str, Any]) ->
         return _resolve_ecs(resource)
 
     # Scenario A: stolen instance-role credentials arrive as resourceType
-    # AccessKey, but the target is the instance the session belongs to.
-    if finding_type.startswith(EXFILTRATION_PREFIX):
+    # AccessKey, but the target is the instance the session belongs to. The
+    # router's PB01 choice requires the same pair (type AND AccessKey, audit
+    # A5), so the guard always vets the target the router will act on.
+    if finding_type.startswith(EXFILTRATION_PREFIX) and resource_type == "AccessKey":
         details = resource.get("accessKeyDetails")
         principal = details.get("principalId") if isinstance(details, dict) else None
         if not isinstance(principal, str) or ":" not in principal:

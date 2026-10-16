@@ -13,7 +13,7 @@ make ir-report INCIDENT=<incident-id>            # FMT=json for machine-readable
 
 ## Part A: PB-04 (compromised ECS task, scenario D)
 
-What PB-04 did: stopped the compromised task (its processes are dead), forced a new deployment of the owning service, and (after CONTAINED) stored the pre-stop task description and task definition as SHA-256-checked evidence at `incidents/<id>/pb04-ecs-task-<ts>.json`.
+What PB-04 did: proved the task belongs to the service (`ListTasks` by service name), stopped the compromised task (its processes are dead), forced a new deployment of the owning service, and (after CONTAINED) stored the pre-stop task description and task definition as SHA-256-checked evidence at `incidents/<id>/pb04-ecs-task-<ts>.json`.
 
 What it did **not** do: change the image. `forceNewDeployment` re-runs the **same task definition and image digest** (D12). If the image is the source, the replacements carry the same implant.
 
@@ -50,21 +50,30 @@ What it did **not** do: change the image. `forceNewDeployment` re-runs the **sam
 
 ## Part B: PB-05 (blocked client IP, scenario E)
 
-What PB-05 did: appended the address (`/32` or `/128`) to the CloudFront WAF block list (`<name>-soar-blocked-ips-v4` or `-v6`), read it back, and recorded `blockedCidr`, `ipSetArn` and `blockExpiresAt` on the row. Nothing removes a block automatically (D15), and `terraform apply` never touches the addresses.
+What PB-05 did: confirmed with WAF that the address was being rate-limited on `/api/*` (`SoarApiRateLimit`) for at least two consecutive harvests and at block time, recorded `blockedCidr`, `ipSetArn`, `blockExpiresAt` and `blockState` on the row **before** changing anything, appended the address (`/32` or `/128`) to the CloudFront WAF block list (`<name>-soar-blocked-ips-v4` or `-v6`), and read it back (`blockState = active`).
 
-### B1. Review blocks that are past their expiry
+What happens next without anyone: the **sweeper** (`<name>-soar-pb05-sweeper`, every 15 min) lifts the block once `blockExpiresAt` has passed (default 24 h) and no newer unexpired row covers the same address, then records `blockLiftedAt` and an `unblock` action on the row (D15, audit A2). `terraform apply` never touches the addresses.
+
+### B1. Cross-check the blocks
 
 ```bash
 make expired-blocks                  # FMT=json for JSON; read-only, never calls UpdateIPSet
+# Also look for orphans in both sets:
+#   cd soar && python -m tools.list_expired_blocks --table <name>-soar-incidents \
+#     --ip-set-arn <v4 ARN> --ip-set-arn <v6 ARN>
 ```
 
-It lists incident id, CIDR, age, and the exact removal commands for each overdue block that is still in the live IP set.
+It groups rows by address (the latest expiry wins) and reports:
 
-### B2. Decide
+- **expired**: past expiry. `STILL BLOCKED` here means the sweeper has not lifted it yet (it runs every 15 min) or failed: check the sweeper's log. The exact manual removal commands are printed.
+- **lost**: not yet expired, but the address is missing from the live IP set: removed by hand, the pending block never applied, or the IP sets were destroyed and recreated (for example `enable_edge = false`; ADR-0005 A11). Re-block by hand if it still matters.
+- **orphans**: entries in the IP set that no incident row explains (added outside PB-05). The sweeper never removes them; decide here.
 
-Keep the block if the source is still hostile (WAF logs via hunt query 04 show continued attempts, or threat intel says so). Remove it if the address was dynamic, shared (a NAT or carrier-grade gateway), or a false positive.
+### B2. Decide (before expiry)
 
-### B3. Remove one block (add-only automation, manual removal)
+Keep the block until expiry if the source is still hostile (WAF logs via hunt query 04 show continued attempts). Lift it early if the address is dynamic, **shared** (a NAT, a carrier-grade gateway, a corporate proxy: one client's abuse blocks everyone behind it), or a false positive; add known-shared addresses to the never-block list. To keep a hostile source blocked **longer** than the TTL, block it in a separate, human-owned rule: the sweeper lifts every PB-05 block on expiry.
+
+### B3. Remove one block by hand (early lift, or an orphan)
 
 `UpdateIPSet` **replaces the whole list**, so always start from a fresh read and remove exactly one entry:
 
@@ -80,9 +89,9 @@ aws wafv2 get-ip-set --scope CLOUDFRONT --region us-east-1 --name "$NAME" --id "
   --query "IPSet.Addresses" | grep -c "<blockedCidr>"        # expect 0
 ```
 
-On `WAFOptimisticLockException`, someone (or PB-05) changed the set in between: start again from `get-ip-set`. If the entry is the only one, use `--addresses '[]'` [inferred: the CLI's JSON form for an empty list; check the read-back].
+On `WAFOptimisticLockException`, someone (PB-05, the sweeper or another analyst) changed the set in between: start again from `get-ip-set`. If the entry is the only one, use `--addresses '[]'` [inferred: the CLI's JSON form for an empty list; check the read-back].
 
-Record the removal (who, when, why) on the incident.
+Record the removal (who, when, why) on the incident. The sweeper later finds the address already gone and changes nothing.
 
 ### B3a. Wrong block on a protected address
 

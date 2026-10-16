@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from core.finding import (
+    Ec2Target,
     EcsTaskTarget,
     Finding,
     IpAddressTarget,
@@ -197,3 +198,18 @@ def test_ip_refusal_checks_beyond_is_global(flags: dict[str, bool], reason: str)
 
     fake: Any = SimpleNamespace(is_global=True, **flags)
     assert reason in (ip_refusal(fake) or "")
+
+
+def test_exfiltration_type_needs_the_access_key_resource() -> None:
+    # Audit A5: the router's PB01 choice needs type AND resourceType AccessKey,
+    # so Finding resolves the session's instance only for that same pair.
+    exfil = events.exfiltration("i-0123456789abcdef0")
+    target = Finding.from_event(exfil).target
+    assert target == Ec2Target("i-0123456789abcdef0", session_role_id="AROAEXAMPLEFAKEROLEID")
+    exfil["detail"]["resource"] = {
+        "resourceType": "Instance",
+        "instanceDetails": {"instanceId": "i-0fedcba9876543210"},
+    }
+    assert Finding.from_event(exfil).target == Ec2Target("i-0fedcba9876543210")
+    exfil["detail"]["resource"] = {"resourceType": "S3Bucket", "s3BucketDetails": []}
+    assert isinstance(Finding.from_event(exfil).target, UnknownTarget)

@@ -65,6 +65,11 @@ locals {
     WAF_REGION           = local.enable_pb05 ? local.region : ""
     NEVER_BLOCK_PARAM    = local.enable_pb05 ? local.never_block_param_name : ""
     EDGE_EVENT_SOURCE    = local.enable_pb05 ? local.edge_event_source : ""
+    # PB-05 corroboration (audit A1): the rate rule whose managed keys must
+    # contain the address at block time.
+    WAF_WEB_ACL_NAME   = local.enable_pb05 ? var.waf_web_acl.name : ""
+    WAF_WEB_ACL_ID     = local.enable_pb05 ? var.waf_web_acl.id : ""
+    WAF_RATE_RULE_NAME = local.enable_pb05 ? var.waf_rate_rule_name : ""
   }
 
   scope_condition_key = "aws:ResourceTag/${local.scope_tag_key}"
@@ -346,6 +351,21 @@ data "aws_iam_policy_document" "pb04" {
       values   = [local.scope_tag_value]
     }
   }
+  # Ownership proof (audit A4): ListTasks(cluster, serviceName) must contain
+  # the task. The Service Authorization Reference lists ListTasks against the
+  # container-instance resource type with the ecs:cluster condition key
+  # [inferred: not verifiable offline]; Fargate tasks have no container
+  # instance, so the resource is "*" and the ecs:cluster condition scopes it.
+  statement {
+    sid       = "ListServiceTasks"
+    actions   = ["ecs:ListTasks"]
+    resources = ["*"]
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs_cluster_arn]
+    }
+  }
   statement {
     sid       = "ReadService"
     actions   = ["ecs:DescribeServices"]
@@ -384,7 +404,9 @@ data "aws_iam_policy_document" "pb04" {
 }
 
 # PB-05 (plan §4.2): read and append to exactly the two block lists. No
-# UpdateWebACL, Delete* or CreateIPSet anywhere.
+# UpdateWebACL, Delete* or CreateIPSet anywhere. Audit A1 adds two reads PB-05
+# does itself, from sources the caller cannot write: the rate rule's managed
+# keys on the CloudFront ACL (corroboration) and the never-block list.
 data "aws_iam_policy_document" "pb05" {
   count = local.enable_pb05 ? 1 : 0
 
@@ -392,6 +414,16 @@ data "aws_iam_policy_document" "pb05" {
     sid       = "AppendToBlockLists"
     actions   = ["wafv2:GetIPSet", "wafv2:UpdateIPSet"]
     resources = var.block_ip_set_arns
+  }
+  statement {
+    sid       = "CorroborateWithRateRule"
+    actions   = ["wafv2:GetRateBasedStatementManagedKeys"]
+    resources = [var.waf_web_acl.arn]
+  }
+  statement {
+    sid       = "ReadNeverBlockList"
+    actions   = ["ssm:GetParameter"]
+    resources = [one(aws_ssm_parameter.never_block[*].arn)]
   }
 }
 

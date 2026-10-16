@@ -78,7 +78,7 @@ Code-dependent resources are written in full but **off** until their artifact ex
 | `enable_report_worker` | `false` | EC2 forensic target carrying the SOAR scope tag |
 | `soar_playbook_package` | `null` | Safety guard + PB-01/02/03 Lambdas and the `cs-ir-router` state machine. Until then GuardDuty findings go **straight to SNS email**. PB-04, PB-05 and the notifier also need it. |
 | `soar_dry_run` | `true` | `false` = playbooks really act |
-| `enable_edge` | `false` | CloudFront, the CloudFront and regional WAFs (≈ US$19/month), the SPA bucket and WAF logging; the REST API too when `container_image` is set; and **PB-05** (edge bus, harvester, never-block list) when the package is set. **Requires `aws_region = us-east-1`** ([ADR-0004](docs/adr/0004-edge-identity-waf.md)). |
+| `enable_edge` | `false` | CloudFront, the CloudFront and regional WAFs (≈ US$20/month), the SPA bucket and WAF logging; the REST API too when `container_image` is set; and **PB-05** (edge bus, harvester + sighting table, never-block list, auto-expiry sweeper) when the package is set. **Requires `aws_region = us-east-1`** ([ADR-0004](docs/adr/0004-edge-identity-waf.md)). |
 | `soar_scope_app_service` | `false` | The SOAR scope tag on the docs-api ECS service and its tasks. **PB-04** exists only with this, a container image and `guardduty_runtime_monitoring = true` (paid) ([ADR-0005](docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md)). |
 | `chatops_webhook_param_name` | `""` | The ChatOps notifier, subscribed to the incidents topic. Name an SSM SecureString you created with the SOAR key ([runbook](docs/runbooks/chatops-setup.md)); the URL never enters Terraform. |
 | `allow_worker_lab_scan` | `false` | LAB ONLY: worker egress to all VPC ports, for scenario A |
@@ -136,10 +136,10 @@ Leave `bootstrap/` up: it costs cents.
 
 | Item | Approximate cost | Default |
 |---|---|---|
-| WAF: 2 web ACLs ($5 each) + 9 rules ($1 each) + $0.60 per million requests; IP sets have no listed charge [inferred] | **≈ $19/month** with no traffic | off (`enable_edge`) |
+| WAF: 2 web ACLs ($5 each) + 10 rules ($1 each, incl. the `/api/*` PB-05 rate rule) + $0.60 per million requests; IP sets have no listed charge [inferred] | **≈ $20/month** with no traffic | off (`enable_edge`) |
 | CloudFront / REST API / WAF logs / edge KMS key | free tier / $3.50 per million calls / cents / $1 per month | with `enable_edge` |
 | CloudWatch alarm (PB-05 harvester) | $0.10/month | with PB-05 |
-| Dedicated edge bus; PB-04, PB-05, harvester and notifier Lambdas | free tier at lab volume | flags |
+| Dedicated edge bus; PB-04, PB-05, harvester, sweeper and notifier Lambdas; the on-demand sighting table | free tier at lab volume | flags |
 | GuardDuty Runtime Monitoring (PB-04 prerequisite) | per vCPU-hour after the trial | **off** |
 | Cognito Essentials (TOTP) | free tier for lab MAU | **on** |
 | LLM summary in the IR report | provider-billed, per run, opt-in only | off |

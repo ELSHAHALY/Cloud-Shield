@@ -19,7 +19,7 @@ help:
 	@echo "make package-soar   - deterministic Lambda zip -> build/soar-playbooks.zip"
 	@echo "make sim            - attack sim: SCENARIO=a|a-recon|b|c|d|e MODE=replay [TARGET=local|aws]"
 	@echo "make ir-report      - IR report from an incident: INCIDENT=<id> [FMT=md|json]"
-	@echo "make expired-blocks - list PB-05 IP blocks past blockExpiresAt (read-only)"
+	@echo "make expired-blocks - audit PB-05 IP blocks: expired, lost, orphans (read-only)"
 
 scan: secrets sast sca iac soar-lint soar-test
 
@@ -85,7 +85,8 @@ FMT ?= md
 ir-report:
 	cd soar && $(PYTHON) -m tools.generate_ir_report $(INCIDENT) --table $(NAME)-soar-incidents --format $(FMT)
 
-# PB-05 blocks past their expiry (D15). Read-only: never calls UpdateIPSet.
+# PB-05 block audit (D15): expired / lost / orphan entries. Read-only: never
+# calls UpdateIPSet (the sweeper Lambda lifts expired blocks).
 # Needs dynamodb:Scan + kms:Decrypt (SOAR key) + wafv2:GetIPSet.
 expired-blocks:
 	cd soar && $(PYTHON) -m tools.list_expired_blocks --table $(NAME)-soar-incidents --region $(REGION) --format $(if $(filter json,$(FMT)),json,text)

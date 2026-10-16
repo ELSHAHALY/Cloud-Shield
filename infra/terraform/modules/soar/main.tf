@@ -11,6 +11,8 @@
 #   playbooks.tf     Lambda functions + per-playbook least-privilege roles
 #   state-machine.tf Step Functions "cs-ir-router"; EventBridge retargets to it
 #   edge-bus.tf      PB-05 only: dedicated edge bus, never-block list, harvester
+#                    (+ its sighting table)
+#   pb05-sweeper.tf  PB-05 only: lifts blocks whose blockExpiresAt has passed
 #   notify.tf        ChatOps notifier, only with chatops_webhook_param_name
 #
 # MTTC (plan §2.4, decision 8 Oct): measured from the EventBridge event `time`

@@ -37,6 +37,11 @@ class Settings:
     waf_region: str = ""
     never_block_param: str = ""
     edge_event_source: str = ""
+    # PB-05 corroboration (audit A1): the CloudFront web ACL and the
+    # PB-05-feeding rate rule whose managed keys must contain the address.
+    waf_web_acl_name: str = ""
+    waf_web_acl_id: str = ""
+    waf_rate_rule_name: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -79,4 +84,7 @@ class Settings:
             waf_region=env.get("WAF_REGION", "").strip(),
             never_block_param=env.get("NEVER_BLOCK_PARAM", "").strip(),
             edge_event_source=env.get("EDGE_EVENT_SOURCE", "").strip(),
+            waf_web_acl_name=env.get("WAF_WEB_ACL_NAME", "").strip(),
+            waf_web_acl_id=env.get("WAF_WEB_ACL_ID", "").strip(),
+            waf_rate_rule_name=env.get("WAF_RATE_RULE_NAME", "").strip(),
         )

@@ -22,6 +22,7 @@ soar/
   playbooks/pb03_s3_restore_bpa.py  event = {"action": "restore"|"evidence", "event": ...}
   playbooks/pb04_ecs_task_contain.py event = {"action": "contain"|"evidence", "event": ...}
   playbooks/pb05_waf_ip_block.py    event = {"action": "block", "event": ...}; also harvest_handler (the PB-05 publisher)
+  playbooks/pb05_unblock_sweeper.py scheduled; lifts PB-05 blocks past blockExpiresAt (audit A2)
   notifier/handler.py               lambda_handler(SNS event, ctx) -> {"posted": bool, ...}; never raises
   tools/                            operator CLIs, NOT in the Lambda zip: generate_ir_report, ai_summary, list_expired_blocks
   sims/                             attack simulations (sims/README.md)
@@ -35,6 +36,7 @@ soar/
 | `soar-pb04-ecs-task-contain` (55 s) | `playbooks.pb04_ecs_task_contain.lambda_handler` | package + `enable_pb04` |
 | `soar-pb05-waf-ip-block` (20 s) | `playbooks.pb05_waf_ip_block.lambda_handler` | package + `enable_pb05` |
 | `soar-pb05-harvester` | `playbooks.pb05_waf_ip_block.harvest_handler` | package + `enable_pb05` |
+| `soar-pb05-sweeper` (60 s) | `playbooks.pb05_unblock_sweeper.lambda_handler` | package + `enable_pb05` |
 | `soar-notifier` | `notifier.handler.lambda_handler` | package + `chatops_webhook_param_name` |
 
 The router state contains the original EventBridge event (`detail`, `time`, …) and `guard.decision`.
@@ -57,9 +59,12 @@ The router state contains the original EventBridge event (`detail`, `time`, …)
 | `BLOCK_IP_SET_ARNS` | PB-05 | the CLOUDFRONT-scope IPv4 and IPv6 block lists |
 | `BLOCK_IP_SET_MAX` (1–10,000, default 1,000), `BLOCK_TTL_HOURS` (1–168, default 24) | PB-05 | cap per IP set; `blockExpiresAt` = block time + TTL |
 | `WAF_REGION` | PB-05 | `us-east-1` (CLOUDFRONT scope) |
-| `NEVER_BLOCK_PARAM`, `EDGE_EVENT_SOURCE` | guard | never-block SSM parameter; `cloudshield.edge` |
+| `NEVER_BLOCK_PARAM`, `EDGE_EVENT_SOURCE` | guard, PB-05 | never-block SSM parameter (re-read by PB-05 before it blocks); `cloudshield.edge` |
+| `WAF_WEB_ACL_NAME`, `WAF_WEB_ACL_ID`, `WAF_RATE_RULE_NAME` | PB-05 | corroboration: the address must be a managed key of this rate rule (`SoarApiRateLimit`) at block time |
 
-**Harvester** (`edge-bus.tf`): `EDGE_BUS_NAME`, `EDGE_EVENT_SOURCE`, `WAF_WEB_ACL_NAME`, `WAF_WEB_ACL_ID`, `WAF_RATE_RULE_NAME`, `WAF_SCOPE`, `WAF_REGION`.
+**Harvester** (`edge-bus.tf`): `EDGE_BUS_NAME`, `EDGE_EVENT_SOURCE`, `WAF_WEB_ACL_NAME`, `WAF_WEB_ACL_ID`, `WAF_RATE_RULE_NAME`, `WAF_SCOPE`, `WAF_REGION`, `HARVEST_STATE_TABLE`, `HARVEST_MIN_GAP_SECONDS`, `HARVEST_MAX_GAP_SECONDS`.
+
+**Sweeper** (`pb05-sweeper.tf`): `INCIDENTS_TABLE`, `BLOCK_IP_SET_ARNS`, `WAF_REGION`.
 
 **Notifier** (`notify.tf`): `INCIDENTS_TABLE`, `CHATOPS_WEBHOOK_PARAM` (the parameter **name**, never the URL), `CHATOPS_ALLOWED_HOSTS` (comma-separated exact host names).
 
@@ -94,12 +99,12 @@ IAM backs rule 3 independently, so a bug in the guard can't widen what a playboo
 
 **Rule 3 for IPs** (only `source = cloudshield.edge` with `resourceType = IPAddress`; any other combination is an unknown target). The first failure refuses:
 
-1. The event source is `EDGE_EVENT_SOURCE`, and its `time` is within [now − 15 min, now + 60 s].
+1. The event source is `EDGE_EVENT_SOURCE`, its `detail.type` is on the edge allow-list (`EDGE_FINDING_TYPES`: today only `CloudShield:IPAddress/WafRateLimitExceeded`), and its `time` is within [now − 15 min, now + 60 s].
 2. Exactly one address: no `/`, no zone id; IPv4-mapped IPv6 is normalised to IPv4.
 3. Global unicast only: `is_global`, and not multicast, unspecified or reserved. Private, loopback, link-local, shared (100.64/10) and documentation ranges are refused.
 4. Not inside any CIDR of the never-block parameter (`NEVER_BLOCK_PARAM`), read on **every** call. Format: comma-separated CIDRs, each with an explicit prefix (`/32` for one host). Unset, unreadable, empty, or **any** invalid entry → every block is refused.
 
-All playbooks also re-check the scope in code before acting. `SCOPE_TAG_PARAM` holds the same tag for operators; the code reads it from `SCOPE_TAG_KEY` / `SCOPE_TAG_VALUE`.
+The guard sees only what the caller wrote, so PB-05 repeats rules 1–4 itself, re-reading the never-block list, and refuses unless WAF corroborates the address (audit A1, see PB-05 notes). All playbooks also re-check the scope in code before acting. `SCOPE_TAG_PARAM` holds the same tag for operators; the code reads it from `SCOPE_TAG_KEY` / `SCOPE_TAG_VALUE`.
 
 ## PB-01 notes
 
@@ -132,7 +137,7 @@ All playbooks also re-check the scope in code before acting. `SCOPE_TAG_PARAM` h
 ## PB-04 notes (ECS task, ADR-0005)
 
 - `contain` runs **before** CONTAINED (timeout 55 s):
-  - Re-check the scope, then `DescribeServices`: the service must carry the scope tag, and the task's `startedBy` must be one of the service's `deployments[].id` (a forged `group` cannot redeploy the wrong service).
+  - Re-check the scope, then `DescribeServices`: the service must carry the scope tag, and `ListTasks(cluster, serviceName)` (desired RUNNING, else STOPPED) must contain the task ARN: ECS itself proves membership, so a forged `group` or `startedBy` cannot redeploy the wrong service.
   - Capture the task and its task definition **in memory, before** `StopTask` (returned as `prestate`).
   - `StopTask` (already stopping: skipped), then `UpdateService(forceNewDeployment)` (skipped on a retry when a fresh PRIMARY deployment that is not the task's own already exists).
   - Verify every 2 s for about 45 s: desiredStatus STOPPED, every container STOPPED, task lastStatus DEPROVISIONING or STOPPED; **the specific new deployment** is PRIMARY; the service is still in scope.
@@ -142,9 +147,10 @@ All playbooks also re-check the scope in code before acting. `SCOPE_TAG_PARAM` h
 
 ## PB-05 notes (WAF IP block, ADR-0005)
 
-- Events arrive only through the dedicated bus `<name>-soar-edge` (explicit Deny for any publisher not in `pb05_publisher_arns`). The harvester publishes one event per rate-limited key (at most 50, no `Time`); it strips only `/32` (IPv4) and `/128` (IPv6) and passes any other prefix through for the guard to refuse.
-- `block`: `GetIPSet` → already present = idempotent success → cap check → add-only `UpdateIPSet` with the `LockToken` (at most 3 attempts on `WAFOptimisticLockException`) → read-back → `blockedCidr`, `ipSetArn`, `blockExpiresAt` on the row.
-- Nothing removes a block automatically: `make expired-blocks` (`tools/list_expired_blocks.py`, read-only) lists overdue ones with the removal command.
+- Events arrive automatically through the dedicated bus `<name>-soar-edge` (explicit Deny for any publisher not in `pb05_publisher_arns`; the rule forwards only `CloudShield:IPAddress/*` types). It is not the only path (anyone with `StartExecution` on the router can start one), so PB-05 trusts nothing in the event (audit A1).
+- The harvester reads only `SoarApiRateLimit` (`/api/*`), runs on the alarm and every 5 minutes, and publishes an address only after it was a managed key in **≥ 2 consecutive harvests** (state in `<name>-soar-pb05-harvest-state`: `HARVEST_STATE_TABLE`, `HARVEST_MIN_GAP_SECONDS` = 60, `HARVEST_MAX_GAP_SECONDS` = 660). One event per persistent key (at most 50, no `Time`); it strips only `/32` (IPv4) and `/128` (IPv6) and passes any other prefix through for the guard to refuse.
+- `block`: re-check source, type allow-list and address rules → **re-read the never-block list** → **corroborate** (`GetRateBasedStatementManagedKeys` must list the address now) → `GetIPSet` → already present = idempotent success → cap check → `blockedCidr`, `ipSetArn`, `blockExpiresAt`, `blockState = pending` on the row → add-only `UpdateIPSet` with the `LockToken` (at most 3 attempts on `WAFOptimisticLockException`) → read-back → `blockState = active`.
+- **Blocks expire automatically:** the sweeper (every 15 min) removes only row-tracked, expired entries not covered by a newer unexpired row (remove-only, `LockToken`, read-back), then records `blockLiftedAt` and an `unblock` action. It reports, and never removes, orphans. `make expired-blocks` (`tools/list_expired_blocks.py`, read-only) is the analyst's cross-check: expired, lost and orphan entries.
 
 ## ChatOps notifier (plan §5.1)
 

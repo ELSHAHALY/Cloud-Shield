@@ -26,10 +26,16 @@ _RUNTIME_TYPE = re.compile(r".*:Runtime/.*", re.DOTALL)
 
 
 def _route(event: dict[str, Any]) -> tuple[str, str] | None:
+    """RouteByResource, choice by choice and in order (state-machine.tf
+    local.route_choices; tests/route_choices.json is the shared expected
+    table). Every type-based choice also requires the matching resourceType
+    (audit A5), so the router acts on the same target the guard vetted."""
     detail = event["detail"]
     finding_type = detail.get("type", "")
     resource_type = detail.get("resource", {}).get("resourceType")
-    if finding_type.startswith(EXFILTRATION_PREFIX) or resource_type == "Instance":
+    if finding_type.startswith(EXFILTRATION_PREFIX) and resource_type == "AccessKey":
+        return "pb01-ec2-isolate", "isolate"
+    if resource_type == "Instance":
         return "pb01-ec2-isolate", "isolate"
     if resource_type == "AccessKey":
         return "pb02-iam-key-revoke", "revoke"
@@ -68,12 +74,24 @@ def run_local(
     clients: Callable[..., Any],
     *,
     clock: Callable[[], datetime] | None = None,
+    force_dry_run: bool = False,
 ) -> dict[str, Any]:
+    """`force_dry_run` (scenarios D/E, D20, audit A10): the guard AND the
+    playbook read a switch that always says "dry-run", so flipping the SSM
+    parameter mid-run can never make a dry-run-only scenario act."""
     clock = clock or (lambda: datetime.now(UTC))
+
+    def ssm_switch() -> bool | None:
+        return read_dry_run(clients("ssm"), settings.dry_run_param)
+
+    def always_dry_run() -> bool:
+        return True
+
+    dry_run_reader = always_dry_run if force_dry_run else ssm_switch
     guard = SafetyGuard(
         settings,
         AwsTagReader(clients),
-        lambda: read_dry_run(clients("ssm"), settings.dry_run_param),
+        dry_run_reader,
         lambda: read_never_block(clients("ssm"), settings.never_block_param),
     )
     decision = guard.evaluate(event)
@@ -99,7 +117,9 @@ def run_local(
         "pb04-ecs-task-contain": Pb04EcsTaskContain,
         "pb05-waf-ip-block": Pb05WafIpBlock,
     }
-    playbook = playbooks[name](settings, clients, clock)
+    playbook = playbooks[name](
+        settings, clients, clock, dry_run_reader=always_dry_run if force_dry_run else None
+    )
     state = {**event, "guard": {"decision": decision.to_dict()}}
     containment = playbook.handle({"action": action, "event": state})
     result["playbook"] = name

@@ -45,15 +45,21 @@ variable "allow_worker_lab_scan" {
 }
 
 variable "enable_edge" {
-  description = "CloudFront + both WAFs + SPA bucket (+ REST API when container_image is set) and WAF logging. ~US$19/month for the WAFs (plan §8). Requires aws_region = us-east-1."
+  description = "CloudFront + both WAFs + SPA bucket (+ REST API when container_image is set) and WAF logging. ~US$20/month for the WAFs (2 ACLs + 10 rules). Requires aws_region = us-east-1."
   type        = bool
   default     = false
 }
 
 variable "waf_rate_limit" {
-  description = "Requests per client IP per 5 minutes before CloudFront's WAF answers 429."
+  description = "Requests per client IP per 5 minutes before CloudFront's WAF answers 429 (site-wide; never a PB-05 block)."
   type        = number
   default     = 300
+}
+
+variable "waf_api_rate_limit" {
+  description = "Requests per client IP per 5 minutes to /api/* before the PB-05-feeding SoarApiRateLimit rule answers 429. An address must stay over it for two consecutive harvests before PB-05 may block it."
+  type        = number
+  default     = 200
 }
 
 variable "manage_apigw_account_role" {

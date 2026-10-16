@@ -510,6 +510,23 @@ def test_ip_source_must_match_configured_edge_source() -> None:
     assert guard_.evaluate(events.edge_ip()).reason == "event is not from the edge source"
 
 
+@pytest.mark.parametrize(
+    "finding_type",
+    [
+        "CloudShield:IPAddress/SomethingNew",  # right prefix, not allow-listed
+        "Recon:EC2/Portscan",
+        "cloudshield:ipaddress/wafratelimitexceeded",  # case matters
+    ],
+)
+def test_ip_edge_type_must_be_allow_listed(finding_type: str) -> None:
+    # Audit A1: only edge types PB-05 can corroborate (Phase E adds its own).
+    event = events.edge_ip()
+    event["detail"]["type"] = finding_type
+    guard_, _ = d_guard()
+    decision = guard_.evaluate(event)
+    assert decision == Decision(False, False, "edge finding type is not allowed")
+
+
 def test_ip_disabled_refuses() -> None:
     guard_, _ = d_guard(settings=SETTINGS)
     assert guard_.evaluate(events.edge_ip()).reason == "IP blocking is not configured"

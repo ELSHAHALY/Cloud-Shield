@@ -3,7 +3,8 @@
 #
 #   RecordDetected ─► SafetyGuard ─► GuardDecision ─┬─ allowed==true ─► RouteByResource
 #                                                   └─ anything else ─► RecordBlocked ─► Notify   (fail closed)
-#        InstanceCredentialExfiltration* / Instance ─► PB01Isolate ─┐
+#        InstanceCredentialExfiltration* + AccessKey
+#                                   / Instance ─► PB01Isolate ─┐
 #        AccessKey (IAM user)                       ─► PB02Revoke  ─┼─► IsDryRun
 #        S3Bucket + Policy:S3/Bucket*               ─► PB03Restore ─┤
 #        ECSCluster + *:Runtime/*      (enable_pb04) ─► PB04Contain ─┤
@@ -39,14 +40,25 @@ locals {
   incident_key = { incidentId = { "S.$" = "$.detail.id" } }
 
   # RouteByResource choices: concat() of conditional lists, so the graph stays
-  # valid with PB-04 / PB-05 off (plan §4.3).
+  # valid with PB-04 / PB-05 off (plan §4.3). Every type-based choice also
+  # requires the matching resourceType (audit A5): the guard vets the target
+  # Finding resolves from that same pair, so the router can never act on a
+  # target the guard did not check. The exact ordered table is pinned by
+  # tests/route_choices.json (soar.tftest.hcl and soar/tests/test_sims.py).
+  # resourceType is always present here: RecordDetected reads it first.
   route_choices = concat(
     [
       # Scenario A: stolen instance-role credentials. GuardDuty reports these
       # with resourceType "AccessKey", but the response is PB-01 (isolate
       # the instance + revoke the ROLE's sessions), not PB-02 (IAM users).
       # PB-01 derives the instance id from accessKeyDetails.principalId.
-      { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Isolate" },
+      {
+        And = [
+          { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*" },
+          { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey" },
+        ]
+        Next = "PB01Isolate"
+      },
       { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Isolate" },
       { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey", Next = "PB02Revoke" },
       # Scenario C: only public-exposure findings. Block Public Access does
@@ -85,7 +97,13 @@ locals {
   evidence_choices = concat(
     [
       { Variable = "$.detail.resource.resourceType", StringEquals = "Instance", Next = "PB01Snapshot" },
-      { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*", Next = "PB01Snapshot" },
+      {
+        And = [
+          { Variable = "$.detail.type", StringMatches = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration*" },
+          { Variable = "$.detail.resource.resourceType", StringEquals = "AccessKey" },
+        ]
+        Next = "PB01Snapshot"
+      },
       { Variable = "$.detail.resource.resourceType", StringEquals = "S3Bucket", Next = "PB03Evidence" },
     ],
     local.enable_pb04 ? [

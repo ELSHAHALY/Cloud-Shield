@@ -9,8 +9,9 @@ enable_interface_endpoints = false
 container_image            = null # e.g. "<acct>.dkr.ecr.us-east-1.amazonaws.com/cloudshield-dev/docs-api@sha256:<64 hex>"
 enable_report_worker       = false
 allow_worker_lab_scan      = false
-enable_edge                = false # CloudFront + WAF x2 (~US$19/month); us-east-1 only
-waf_rate_limit             = 300
+enable_edge                = false # CloudFront + WAF x2 (~US$20/month); us-east-1 only
+waf_rate_limit             = 300   # site-wide 429 only
+waf_api_rate_limit         = 200   # /api/* only; the PB-05 feed
 github_oidc_provider_arn   = null # bootstrap output github_oidc_provider_arn -> CI ECR push role
 soar_scope_app_service     = false
 

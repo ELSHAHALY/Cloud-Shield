@@ -1,8 +1,12 @@
 ###############################################################################
 # WAF (decision D4). Behind CloudFront the regional ACL sees CloudFront's IP
-# (F3), so every per-IP control — reputation, rate limit and the PB-05 block
+# (F3), so every per-IP control — reputation, rate limits and the PB-05 block
 # list — lives on the CloudFront ACL. The regional ACL locks the API origin to
 # CloudFront and inspects payloads.
+#
+# Sampled requests are OFF on every rule and both ACLs (audit A7): a sampled
+# request carries the request headers, including the Authorization ID token,
+# and the redaction below applies to the logs only. Metrics stay on.
 ###############################################################################
 
 # Shared secret CloudFront adds to every /api/* origin request (D3). A bypass
@@ -16,8 +20,10 @@ resource "random_password" "origin_verify" {
 
 # -----------------------------------------------------------------------------
 # PB-05 block lists (F23). Terraform creates them empty and then never touches
-# the addresses again: PB-05 adds to them, and an apply must never lift a
-# block (same principle as ADR-0003). Removal is a documented human step.
+# the addresses again: PB-05 adds to them, the PB-05 sweeper lifts expired
+# ones, and an apply must never lift a block (same principle as ADR-0003).
+# Destroying and recreating a set (e.g. enable_edge=false) drops every block;
+# tools/list_expired_blocks.py reports those rows as "lost" (ADR-0005).
 # -----------------------------------------------------------------------------
 resource "aws_wafv2_ip_set" "soar_blocked_v4" {
   name               = "${var.name}-soar-blocked-ips-v4"
@@ -58,7 +64,7 @@ resource "aws_wafv2_ip_set" "soar_blocked_v6" {
 # -----------------------------------------------------------------------------
 resource "aws_wafv2_web_acl" "cloudfront" {
   name        = "${var.name}-cloudfront"
-  description = "CloudShield edge: PB-05 block list, IP reputation, per-IP rate limit, common + known-bad-input rules"
+  description = "CloudShield edge: PB-05 block list, IP reputation, per-IP rate limits, common + known-bad-input rules"
   scope       = "CLOUDFRONT"
 
   default_action {
@@ -88,7 +94,7 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "SoarBlockedIps"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
@@ -107,14 +113,56 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "AWSManagedRulesAmazonIpReputationList"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
-  # PB-05's harvester (stage 2b) reads the keys this rule is limiting.
+  # PB-05 feed (audit A2): a separate, scoped-down rate rule for /api/* only.
+  # The harvester and PB-05's corroboration read ONLY this rule's managed
+  # keys, so a burst on the SPA (or the site-wide 429 below) never becomes a
+  # block. It sits before RateLimitPerIp so it keeps counting /api/* requests
+  # even while the site-wide rule is answering 429.
+  rule {
+    name     = local.soar_rate_rule_name
+    priority = 2
+    action {
+      block {
+        custom_response {
+          response_code = 429
+        }
+      }
+    }
+    statement {
+      rate_based_statement {
+        limit                 = var.waf_api_rate_limit
+        evaluation_window_sec = 300
+        aggregate_key_type    = "IP"
+        scope_down_statement {
+          byte_match_statement {
+            search_string         = "/api/"
+            positional_constraint = "STARTS_WITH"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "NONE"
+            }
+          }
+        }
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = local.soar_rate_rule_name
+      sampled_requests_enabled   = false
+    }
+  }
+
+  # Site-wide per-IP limit: answers 429, never harvested (not a PB-05 feed).
   rule {
     name     = local.rate_rule_name
-    priority = 2
+    priority = 3
     action {
       block {
         custom_response {
@@ -132,13 +180,13 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = local.rate_rule_name
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
-    priority = 3
+    priority = 4
     override_action {
       none {}
     }
@@ -151,13 +199,13 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "AWSManagedRulesCommonRuleSet"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
   rule {
     name     = "AWSManagedRulesKnownBadInputsRuleSet"
-    priority = 4
+    priority = 5
     override_action {
       none {}
     }
@@ -170,14 +218,14 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "AWSManagedRulesKnownBadInputsRuleSet"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${var.name}-cloudfront"
-    sampled_requests_enabled   = true
+    sampled_requests_enabled   = false
   }
 
   tags = var.tags
@@ -233,7 +281,7 @@ resource "aws_wafv2_web_acl" "api" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "OriginVerify"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
@@ -252,7 +300,7 @@ resource "aws_wafv2_web_acl" "api" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "AWSManagedRulesKnownBadInputsRuleSet"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
@@ -271,14 +319,14 @@ resource "aws_wafv2_web_acl" "api" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "AWSManagedRulesSQLiRuleSet"
-      sampled_requests_enabled   = true
+      sampled_requests_enabled   = false
     }
   }
 
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${var.name}-api"
-    sampled_requests_enabled   = true
+    sampled_requests_enabled   = false
   }
 
   tags = var.tags
@@ -296,6 +344,7 @@ resource "aws_wafv2_web_acl_association" "api" {
 # -----------------------------------------------------------------------------
 locals {
   rate_rule_name          = "RateLimitPerIp"
+  soar_rate_rule_name     = "SoarApiRateLimit"
   waf_redacted_header_set = ["authorization", "cookie", "x-origin-verify"]
 }
 

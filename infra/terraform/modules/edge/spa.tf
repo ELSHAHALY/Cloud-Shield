@@ -3,7 +3,7 @@
 ###############################################################################
 
 resource "aws_s3_bucket" "spa" {
-  #checkov:skip=CKV_AWS_18:Same as the evidence bucket: server access logs are replaced by CloudTrail S3 data events + WAF logs of every viewer request (handoff gap 16)
+  #checkov:skip=CKV_AWS_18:Server access logs cannot target the SSE-KMS log archive. Compensating controls: CloudTrail S3 data events on this bucket (dev wires spa_bucket_arn into modules/detection data_event_bucket_arns whenever enable_edge is on) + WAF logs of every viewer request (handoff gap 16)
   #checkov:skip=CKV_AWS_144:Cross-region replication out of scope (single-region by design, plan §1.2); the SPA is a rebuildable artefact
   #checkov:skip=CKV2_AWS_62:No event-driven processing of SPA assets
   bucket        = "${var.name}-spa-${local.account_id}"

@@ -359,7 +359,7 @@ Not granted anywhere: `wafv2:UpdateWebACL`, `wafv2:Delete*`, `wafv2:CreateIPSet`
 
 | Item | Approximate cost | Default |
 |---|---|---|
-| WAF: 2 ACLs ($5 each) + 9 rules ($1 each) + $0.60 per million requests; IP sets have no listed charge [inferred] | **≈ $19/month** with no traffic | off (`enable_edge`) |
+| WAF: 2 ACLs ($5 each) + 9 rules ($1 each) + $0.60 per million requests; IP sets have no listed charge [inferred]. *Audit A2 added a 10th rule (`SoarApiRateLimit`): ≈ $20/month.* | **≈ $19/month** with no traffic | off (`enable_edge`) |
 | CloudFront / REST API / WAF logs / edge KMS | free tier / $3.50 per M / cents / $1 | with edge |
 | CloudWatch alarm (harvester) | $0.10/month | with PB-05 |
 | Dedicated bus, PB-04/05, harvester and notifier Lambdas | free tier at lab volume | flags |

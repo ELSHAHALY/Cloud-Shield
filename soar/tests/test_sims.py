@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -333,65 +336,144 @@ def test_replay_aws_requires_state_machine_arn(world: Any, capsys: Any) -> None:
 
 
 # --------------------------------------------------------------- router parity
-STATE_MACHINE_TF = (
-    Path(__file__).resolve().parents[2] / "infra/terraform/modules/soar/state-machine.tf"
-)
+# Audit A6: the ordered RouteByResource table lives in ONE file. soar.tftest.hcl
+# asserts the RENDERED state-machine definition equals it (PB-04/PB-05 on and
+# off); here `_route` is checked against the same table, evaluated with Step
+# Functions Choice semantics, for every scenario and every mutation below.
+SOAR_TF_DIR = Path(__file__).resolve().parents[2] / "infra/terraform/modules/soar"
+STATE_MACHINE_TF = SOAR_TF_DIR / "state-machine.tf"
+ROUTE_TABLE = SOAR_TF_DIR / "tests/route_choices.json"
+SM_NEXT = {
+    "PB01Isolate": ("pb01-ec2-isolate", "isolate"),
+    "PB02Revoke": ("pb02-iam-key-revoke", "revoke"),
+    "PB03Restore": ("pb03-s3-restore-bpa", "restore"),
+    "PB04Contain": ("pb04-ecs-task-contain", "contain"),
+    "PB05Block": ("pb05-waf-ip-block", "block"),
+}
+_MISSING = object()
 
 
-def _route_choices_tf() -> str:
+def _path(event: dict[str, Any], path: str) -> Any:
+    value: Any = event
+    for part in path.removeprefix("$.").split("."):
+        if not isinstance(value, dict) or part not in value:
+            return _MISSING
+        value = value[part]
+    return value
+
+
+def _rule_matches(rule: dict[str, Any], event: dict[str, Any]) -> bool:
+    if "And" in rule:
+        return all(_rule_matches(r, event) for r in rule["And"])
+    value = _path(event, rule["Variable"])
+    if "IsPresent" in rule:
+        return (value is not _MISSING) == rule["IsPresent"]
+    if not isinstance(value, str):
+        # Step Functions raises States.Runtime on a missing path; RecordDetected
+        # guarantees type/resourceType exist, and $.source is guarded by IsPresent.
+        return False
+    if "StringEquals" in rule:
+        return value == rule["StringEquals"]
+    if "StringMatches" in rule:
+        pattern = "".join(".*" if c == "*" else re.escape(c) for c in rule["StringMatches"])
+        return re.fullmatch(pattern, value, re.DOTALL) is not None
+    raise AssertionError(f"operator not modelled: {rule}")
+
+
+def _route_by_table(event: dict[str, Any]) -> tuple[str, str] | None:
+    for choice in json.loads(ROUTE_TABLE.read_text(encoding="utf-8")):
+        if _rule_matches(choice, event):
+            return SM_NEXT[choice["Next"]]
+    return None  # Default = NoPlaybook
+
+
+def _parity_events() -> list[tuple[str, dict[str, Any]]]:
+    cases = {
+        "a": {"instance_id": "i-0abc", "role_id": "AROAFAKEROLEID00001"},
+        "a-recon": {"instance_id": "i-0abc"},
+        "b": {"user_name": "cs-dev-honeytoken", "access_key_id": "AKIAFAKEKEY000000001"},
+        "c": {"bucket_name": "cs-dev-lab-exposure"},
+        "d": {"task_arn": events.TASK_ARN, "service_name": "docs-api"},
+        "e": {"ip": "1.1.1.1"},
+    }
+    out: list[tuple[str, dict[str, Any]]] = []
+    for key, targets in cases.items():
+        base = scenarios.build_event(scenarios.SCENARIOS[key], ACCOUNT, REGION, **targets)
+        out.append((key, base))
+        # Mutations: the type and resourceType pairs that must NOT route
+        # together (audit A5), plus the edge-source checks.
+        for label, mutate in (
+            ("type->exfil", lambda e: e["detail"].update(type=EXFIL_TYPE)),
+            (
+                "type->runtime",
+                lambda e: e["detail"].update(type="Execution:Runtime/NewBinaryExecuted"),
+            ),
+            (
+                "type->s3policy",
+                lambda e: e["detail"].update(type="Policy:S3/BucketBlockPublicAccessDisabled"),
+            ),
+            ("type->other", lambda e: e["detail"].update(type="Discovery:Kubernetes/Other")),
+            ("rt->AccessKey", lambda e: e["detail"]["resource"].update(resourceType="AccessKey")),
+            ("rt->Instance", lambda e: e["detail"]["resource"].update(resourceType="Instance")),
+            ("rt->S3Bucket", lambda e: e["detail"]["resource"].update(resourceType="S3Bucket")),
+            ("rt->ECSCluster", lambda e: e["detail"]["resource"].update(resourceType="ECSCluster")),
+            ("rt->IPAddress", lambda e: e["detail"]["resource"].update(resourceType="IPAddress")),
+            ("rt->Other", lambda e: e["detail"]["resource"].update(resourceType="Lambda")),
+            ("source->edge", lambda e: e.update(source="cloudshield.edge")),
+            ("source->guardduty", lambda e: e.update(source="aws.guardduty")),
+            ("source->absent", lambda e: e.pop("source", None)),
+        ):
+            mutated = copy.deepcopy(base)
+            mutate(mutated)
+            out.append((f"{key}:{label}", mutated))
+    return out
+
+
+EXFIL_TYPE = "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS"
+
+
+def test_route_table_is_what_the_state_machine_renders() -> None:
     tf = STATE_MACHINE_TF.read_text(encoding="utf-8")
-    # RouteByResource takes its choices from local.route_choices (concat of
-    # conditional lists); the graph must still route through it.
     assert "Choices = local.route_choices" in tf.split("RouteByResource = {", 1)[1].split("}", 1)[0]
-    return tf.split("route_choices = concat(", 1)[1].split("evidence_choices = concat(", 1)[0]
+    table = json.loads(ROUTE_TABLE.read_text(encoding="utf-8"))
+    assert [c["Next"] for c in table] == [
+        "PB01Isolate",
+        "PB01Isolate",
+        "PB02Revoke",
+        "PB03Restore",
+        "PB04Contain",
+        "PB05Block",
+    ]
+    # The PB-05 choice names the same source the Finding parser trusts.
+    from core.finding import EDGE_SOURCE
+
+    assert {"Variable": "$.source", "StringEquals": EDGE_SOURCE} in table[-1]["And"]
+    # Audit A5: every choice requires a resourceType.
+    for choice in table:
+        rules = choice.get("And", [choice])
+        assert any(r["Variable"] == "$.detail.resource.resourceType" for r in rules), choice
 
 
-def test_local_router_matches_state_machine_routing() -> None:
-    """Every scenario's _route() must agree with cs-ir-router (state-machine.tf)."""
+def test_local_router_matches_the_route_table_for_every_scenario() -> None:
+    """Every scenario (and every mutation) routes identically in _route and in
+    the table soar.tftest.hcl pins to the rendered state machine."""
     from sims.local_router import _route
 
-    cases = {
-        "a": ({"instance_id": "i-0abc", "role_id": "AROAFAKEROLEID00001"}, "pb01-ec2-isolate"),
-        "a-recon": ({"instance_id": "i-0abc"}, "pb01-ec2-isolate"),
-        "b": (
-            {"user_name": "cs-dev-honeytoken", "access_key_id": "AKIAFAKEKEY000000001"},
-            "pb02-iam-key-revoke",
-        ),
-        "c": ({"bucket_name": "cs-dev-lab-exposure"}, "pb03-s3-restore-bpa"),
-        "d": ({"task_arn": events.TASK_ARN, "service_name": "docs-api"}, "pb04-ecs-task-contain"),
-        "e": ({"ip": "1.1.1.1"}, "pb05-waf-ip-block"),
-    }
-    sm_next = {
-        "pb01-ec2-isolate": "PB01Isolate",
-        "pb02-iam-key-revoke": "PB02Revoke",
-        "pb03-s3-restore-bpa": "PB03Restore",
-        "pb04-ecs-task-contain": "PB04Contain",
-        "pb05-waf-ip-block": "PB05Block",
-    }
-    block = _route_choices_tf()
-
-    assert set(cases) == set(scenarios.SCENARIOS)
-    for key, (targets, expected_pb) in cases.items():
-        event = scenarios.build_event(scenarios.SCENARIOS[key], ACCOUNT, REGION, **targets)
-        route = _route(event)
-        assert route is not None, f"{key} did not route"
-        assert route[0] == expected_pb, f"{key} routed to {route}"
-        assert scenarios.SCENARIOS[key].expected_playbook == expected_pb
-        assert f'Next = "{sm_next[expected_pb]}"' in block, f"{sm_next[expected_pb]} not routed"
+    events_ = _parity_events()
+    assert {k for k, _ in events_ if ":" not in k} == set(scenarios.SCENARIOS)
+    for key, event in events_:
+        assert _route(event) == _route_by_table(event), key
+    # Each scenario reaches its own playbook.
+    for key, event in events_:
+        if ":" not in key:
+            route = _route(event)
+            assert route is not None, key
+            assert route[0] == scenarios.SCENARIOS[key].expected_playbook, key
 
 
 def test_router_parity_ecs_and_ip_conditions() -> None:
-    """The two Phase D choices, condition by condition, incl. the source check."""
+    """The A5 pairs, spelled out: a type alone never routes."""
     from sims.local_router import _route
-
-    block = _route_choices_tf()
-    ecs = block.split("local.enable_pb04 ? [{", 1)[1].split("}] : []", 1)[0]
-    assert '{ Variable = "$.detail.resource.resourceType", StringEquals = "ECSCluster" }' in ecs
-    assert '{ Variable = "$.detail.type", StringMatches = "*:Runtime/*" }' in ecs
-    edge = block.split("local.enable_pb05 ? [{", 1)[1].split("}] : []", 1)[0]
-    assert '{ Variable = "$.source", IsPresent = true }' in edge
-    assert '{ Variable = "$.source", StringEquals = local.edge_event_source }' in edge
-    assert '{ Variable = "$.detail.resource.resourceType", StringEquals = "IPAddress" }' in edge
 
     d = scenarios.build_event(
         scenarios.SCENARIOS["d"], ACCOUNT, REGION, task_arn=events.TASK_ARN, service_name="x"
@@ -405,6 +487,11 @@ def test_router_parity_ecs_and_ip_conditions() -> None:
     assert _route(e) is None  # the source check
     del e["source"]
     assert _route(e) is None
+    # Exfiltration type on anything but AccessKey: not the exfiltration choice.
+    s3 = scenarios.build_event(scenarios.SCENARIOS["c"], ACCOUNT, REGION, bucket_name="cs-dev-x")
+    s3["detail"]["type"] = EXFIL_TYPE
+    assert _route(s3) is None
+    assert _route_by_table(s3) is None
 
 
 def test_parser_rejects_unknown_scenario() -> None:
@@ -695,3 +782,66 @@ def test_d_refuses_missing_or_malformed_task(world: Any, capsys: Any) -> None:
     bad = ("--task-arn", "arn:aws:ecs:us-east-1:123456789012:task/abc", "--service-name", "x")
     assert _run(_de_args("d", *bad), clients_factory()) == 3
     assert "not a (new-format) ECS task ARN" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("scenario", "extra"), [("d", D_ARGS), ("e", E_ARGS)])
+def test_d_e_stay_dry_run_even_if_the_switch_flips_mid_run(
+    world: Any, capsys: Any, monkeypatch: Any, scenario: str, extra: tuple[str, ...]
+) -> None:
+    """Audit A10: the runner's gate reads 'true', then the switch flips to
+    'false' before the guard and the playbook run. Both use a reader that
+    always says dry-run, so the outcome is still WOULD_CONTAIN_DRY_RUN and no
+    mutating call is made."""
+    import core.guard
+    import core.playbook
+
+    world.set_dry_run("true")
+    boto3.client("ssm").put_parameter(
+        Name="/cs-dev/soar/pb05_never_block", Value="8.8.8.8/32", Type="String"
+    )
+    reads = {"n": 0}
+    real_read = core.guard.read_dry_run
+
+    def flipping_read(ssm: Any, name: str) -> bool | None:
+        reads["n"] += 1
+        if reads["n"] == 1:  # the runner's D20 gate
+            value = real_read(ssm, name)
+            world.set_dry_run("false")  # an operator flips it right after
+            return value
+        return real_read(ssm, name)
+
+    import sims.local_router
+    import sims.runner
+
+    monkeypatch.setattr(sims.runner, "read_dry_run", flipping_read)
+    monkeypatch.setattr(sims.local_router, "read_dry_run", flipping_read)
+    monkeypatch.setattr(core.playbook, "read_dry_run", flipping_read)
+    if scenario == "d":
+        clients = _ecs_stub_factory(_live_task(IN_SCOPE_TAGS), _live_task(IN_SCOPE_TAGS))
+    else:
+        clients = clients_factory()
+    code = _run(_de_args(scenario, *extra), clients)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert '"status": "WOULD_CONTAIN_DRY_RUN"' in out
+    assert '"dry_run": true' in out
+    assert reads["n"] == 1  # neither the guard nor the playbook read the switch
+    if scenario == "d":
+        clients.stub.assert_no_pending_responses()  # no StopTask / UpdateService
+
+
+def test_run_local_force_dry_run_ignores_a_live_switch(world: Any) -> None:
+    from core.config import Settings
+    from sims.local_router import run_local
+
+    world.set_dry_run("false")
+    event = scenarios.build_event(
+        scenarios.SCENARIOS["c"], ACCOUNT, REGION, bucket_name=world.bucket
+    )
+    settings = Settings.from_env(world.env)
+    outcome = run_local(event, settings, boto3.client, force_dry_run=True)
+    assert outcome["status"] == "WOULD_CONTAIN_DRY_RUN"
+    assert outcome["containment"]["dry_run"] is True
+    bpa = boto3.client("s3").get_public_access_block
+    with pytest.raises(Exception, match="NoSuchPublicAccessBlockConfiguration"):
+        bpa(Bucket=world.bucket)  # PB-03 changed nothing

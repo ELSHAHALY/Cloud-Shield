@@ -86,6 +86,17 @@ variable "waf_rate_limit" {
   }
 }
 
+variable "waf_api_rate_limit" {
+  description = "Requests per client IP per 5 minutes to /api/* before the PB-05-feeding SoarApiRateLimit rule answers 429. Only this rule's rate-limited addresses can become PB-05 blocks (and only after two consecutive harvests)."
+  type        = number
+  default     = 200
+
+  validation {
+    condition     = var.waf_api_rate_limit >= 10 && var.waf_api_rate_limit <= 2000000
+    error_message = "waf_api_rate_limit must be between 10 and 2,000,000 (WAF limits)."
+  }
+}
+
 # ---------------- housekeeping ----------------
 variable "spa_force_destroy" {
   description = "Allow destroying the SPA bucket while it holds a build (the SPA is a rebuildable artefact; lab teardown)."

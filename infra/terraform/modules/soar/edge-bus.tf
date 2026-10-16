@@ -1,23 +1,33 @@
 ###############################################################################
 # PB-05 trigger path (plan §4.2, D13) — only with enable_pb05 + playbooks.
 #
-#   WAF rate rule BlockedRequests >= 1 ─► CloudWatch alarm ─► (default bus)
-#   "CloudWatch Alarm State Change" to ALARM ─► harvester Lambda
-#   ─► GetRateBasedStatementManagedKeys ─► ONE event per IP onto
-#   ${name}-soar-edge ─► rule {source cloudshield.edge, IPAddress} ─► cs-ir-router
+#   SoarApiRateLimit (/api/* only) BlockedRequests >= 1 ─► CloudWatch alarm
+#   ─► "Alarm State Change" to ALARM ─┐
+#   schedule rate(5 minutes) ─────────┴► harvester Lambda
+#   ─► GetRateBasedStatementManagedKeys ─► sighting table (>= 2 consecutive
+#   harvests) ─► ONE event per persistent IP onto ${name}-soar-edge
+#   ─► rule {source cloudshield.edge, type CloudShield:IPAddress/*, IPAddress}
+#   ─► cs-ir-router ─► guard ─► PB-05 (corroborates with WAF, then blocks)
 #
-# The dedicated bus is the ONLY way an edge event reaches the router. Its
-# policy explicitly denies events:PutEvents to every principal not named in
-# the publisher list, so a same-account identity policy cannot publish to it
-# (F24). Residual risk (ADR-0001): an account admin can rewrite the policy.
-# The bus rule matches only IPAddress edge events, so PB-01..PB-04 can never
-# be triggered through it; the guard then vets every address on its own.
+# The dedicated bus is the AUTOMATIC path, not the only one. Its policy
+# explicitly denies events:PutEvents to every principal not named in the
+# publisher list, so a same-account identity policy cannot publish to it
+# (F24). But anyone allowed states:StartExecution on cs-ir-router (or
+# lambda:InvokeFunction on PB-05) can hand the router a forged edge event.
+# So PB-05 does not trust the event (audit A1): it re-reads the never-block
+# list and refuses unless WAF ITSELF reports the address as a managed key of
+# the rate rule at block time. Residual risk: an address WAF really is
+# rate-limiting at that moment can be blocked by such a principal (the
+# harvester would publish it anyway once it persists), and an account admin
+# can rewrite the bus policy (ADR-0001). The bus rule matches only IPAddress
+# edge events, so PB-01..PB-04 can never be triggered through it.
 ###############################################################################
 
 locals {
   never_block_param_name = "${local.ssm_prefix}/pb05_never_block"
   edge_bus_name          = "${var.name}-soar-edge"
   harvester_name         = "${var.name}-soar-pb05-harvester"
+  harvest_state_name     = "${var.name}-soar-pb05-harvest-state"
 
   # NAT egress /32 + operator CIDRs. Never empty when PB-05 is on (precondition).
   never_block_cidrs = concat(
@@ -84,7 +94,8 @@ resource "aws_cloudwatch_event_bus_policy" "edge" {
 }
 
 # -----------------------------------------------------------------------------
-# Never-block list (guard rule 4): read by the guard on every IP evaluation.
+# Never-block list (guard rule 4): read by the guard on every IP evaluation,
+# and again by PB-05 itself right before it blocks (audit A1).
 # -----------------------------------------------------------------------------
 resource "aws_ssm_parameter" "never_block" {
   #checkov:skip=CKV2_AWS_34:Non-secret configuration (the NAT egress IP and operator CIDRs); SecureString adds KMS calls on the guard's hot path for no confidentiality gain
@@ -104,7 +115,9 @@ resource "aws_ssm_parameter" "never_block" {
 }
 
 # -----------------------------------------------------------------------------
-# Edge bus -> router. Only IPAddress events from the edge source.
+# Edge bus -> router. Only IPAddress events from the edge source whose type
+# is a CloudShield IP finding (audit A5); the guard then allows only the
+# explicit type allow-list.
 # -----------------------------------------------------------------------------
 resource "aws_cloudwatch_event_rule" "edge" {
   count          = local.enable_pb05 ? 1 : 0
@@ -113,7 +126,10 @@ resource "aws_cloudwatch_event_rule" "edge" {
   event_bus_name = aws_cloudwatch_event_bus.edge[0].name
   event_pattern = jsonencode({
     source = [local.edge_event_source]
-    detail = { resource = { resourceType = ["IPAddress"] } }
+    detail = {
+      type     = [{ prefix = "CloudShield:IPAddress/" }]
+      resource = { resourceType = ["IPAddress"] }
+    }
   })
   tags = var.tags
 }
@@ -128,7 +144,41 @@ resource "aws_cloudwatch_event_target" "edge" {
 }
 
 # -----------------------------------------------------------------------------
-# Harvester: alarm -> one edge event per rate-limited IP.
+# Persistence state (audit A2): per-address sighting counters. An address is
+# published only once it was a managed key in >= 2 consecutive harvests.
+# Harvester-only IAM; items expire through the TTL attribute.
+# -----------------------------------------------------------------------------
+resource "aws_dynamodb_table" "harvest_state" {
+  #checkov:skip=CKV_AWS_28:Ephemeral sighting counters that expire within minutes (TTL); losing them only delays a block by one harvest, so point-in-time recovery would protect nothing
+  count        = local.enable_pb05 ? 1 : 0
+  name         = local.harvest_state_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "ipAddress"
+
+  attribute {
+    name = "ipAddress"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = false
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.this.arn
+  }
+
+  tags = var.tags
+}
+
+# -----------------------------------------------------------------------------
+# Harvester: alarm or schedule -> one edge event per PERSISTENT rate-limited IP.
 # -----------------------------------------------------------------------------
 data "aws_iam_policy_document" "harvester" {
   count = local.enable_pb05 ? 1 : 0
@@ -142,6 +192,18 @@ data "aws_iam_policy_document" "harvester" {
     sid       = "PublishToEdgeBus"
     actions   = ["events:PutEvents"]
     resources = [aws_cloudwatch_event_bus.edge[0].arn]
+  }
+  statement {
+    sid       = "SightingState"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.harvest_state[0].arn]
+  }
+  # The table is SSE-KMS with the SOAR key [inferred: Decrypt suffices for
+  # item reads and writes through the table key; verify on apply].
+  statement {
+    sid       = "DecryptWithSoarKey"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.this.arn]
   }
 }
 
@@ -191,7 +253,7 @@ resource "aws_cloudwatch_log_group" "harvester" {
 }
 
 resource "aws_lambda_function" "harvester" {
-  #checkov:skip=CKV_AWS_116:Invoked asynchronously by EventBridge on an alarm transition (or the optional schedule); a lost run only delays blocks until the next trigger (documented gap), and failed PutEvents entries raise so Lambda's async retry re-publishes (the router drops duplicate ids)
+  #checkov:skip=CKV_AWS_116:Invoked asynchronously by EventBridge on an alarm transition or the schedule; a lost run only delays blocks until the next harvest, and failed PutEvents entries raise so Lambda's async retry re-publishes (the router drops duplicate ids)
   #checkov:skip=CKV_AWS_117:Only calls AWS control-plane APIs (WAFv2, EventBridge); a VPC attachment would add a NAT dependency to the PB-05 path
   #checkov:skip=CKV_AWS_272:Code signing deferred; the package comes from the gated CI pipeline (stretch goal: AWS Signer profile)
   #checkov:skip=CKV_AWS_115:Reserved concurrency is a variable; default -1 because new accounts (limit 10) reject any reservation — set 5 once the quota allows
@@ -224,6 +286,10 @@ resource "aws_lambda_function" "harvester" {
       WAF_RATE_RULE_NAME = var.waf_rate_rule_name
       WAF_SCOPE          = "CLOUDFRONT"
       WAF_REGION         = local.region
+      # Persistence (audit A2): >= 2 consecutive harvests before publishing.
+      HARVEST_STATE_TABLE     = aws_dynamodb_table.harvest_state[0].name
+      HARVEST_MIN_GAP_SECONDS = tostring(var.pb05_harvest_min_gap_seconds)
+      HARVEST_MAX_GAP_SECONDS = tostring(var.pb05_harvest_max_gap_seconds)
     }
   }
 
@@ -236,13 +302,14 @@ resource "aws_lambda_function" "harvester" {
   tags = var.tags
 }
 
-# Rate rule firing at all -> ALARM. Dimensions for CLOUDFRONT scope are
-# [inferred] (verify-on-apply #12): WebACL = the ACL's metric name, Rule =
-# the rule's metric name; modules/edge sets both equal to the names.
+# The PB-05 feed rule (SoarApiRateLimit, /api/* only) firing at all -> ALARM.
+# Dimensions for CLOUDFRONT scope are [inferred] (verify-on-apply #12):
+# WebACL = the ACL's metric name, Rule = the rule's metric name; modules/edge
+# sets both equal to the names.
 resource "aws_cloudwatch_metric_alarm" "rate_limited" {
   count               = local.enable_pb05 ? 1 : 0
   alarm_name          = "${var.name}-soar-pb05-rate-limited"
-  alarm_description   = "PB-05: the CloudFront rate rule is blocking clients; EventBridge runs the harvester on the transition to ALARM."
+  alarm_description   = "PB-05: the /api/* rate rule (SoarApiRateLimit) is blocking clients; EventBridge runs the harvester on the transition to ALARM."
   namespace           = "AWS/WAFV2"
   metric_name         = "BlockedRequests"
   dimensions          = { WebACL = var.waf_web_acl.name, Rule = var.waf_rate_rule_name }
@@ -284,8 +351,9 @@ resource "aws_lambda_permission" "harvest" {
   source_arn    = aws_cloudwatch_event_rule.harvest[0].arn
 }
 
-# Optional (default off): IPs that become rate-limited while the alarm is
-# already in ALARM otherwise wait for the next transition (known gap).
+# On by default (audit A2): the scheduled harvest provides the second
+# consecutive sighting, and catches IPs that become rate-limited while the
+# alarm is already in ALARM. null turns it off.
 resource "aws_cloudwatch_event_rule" "harvest_schedule" {
   count               = local.enable_pb05 && var.pb05_harvest_schedule != null ? 1 : 0
   name                = "${var.name}-soar-pb05-harvest-schedule"

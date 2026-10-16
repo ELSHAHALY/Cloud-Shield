@@ -37,7 +37,7 @@ Reject with 401 on any failure; never fall back to an unverified decode.
 
 ## Phase E: PB-05 publisher contract (docs-api decoy route)
 
-A decoy route that only an attacker would call may ask PB-05 to block the caller. docs-api becomes a publisher on the dedicated bus; nothing else in SOAR changes (ADR-0005).
+A decoy route that only an attacker would call may ask PB-05 to block the caller. docs-api becomes a publisher on the dedicated bus. SOAR needs two changes too (ADR-0005, audit A1): the new type must be added to the edge allow-list (`EDGE_FINDING_TYPES` in `soar/core/finding.py`), and PB-05 needs a **corroboration** check for it that reads a source the caller cannot write (for example the decoy route's own WAF rule metrics or a WAF label match in the logs). Until both exist, the guard and PB-05 refuse the type.
 
 1. Add the docs-api **task-role ARN** to `pb05_publisher_arns` (modules/soar). The bus policy explicitly denies `events:PutEvents` to every principal not on that list. Grant the task role `events:PutEvents` on the bus ARN (output `edge_event_bus_arn`) only.
 2. Put **one** event per hit on the bus named by output `edge_event_bus_name`:
@@ -60,4 +60,4 @@ A decoy route that only an attacker would call may ask PB-05 to block the caller
    ```
 
    Use `ipAddressV6` for IPv6. Exactly one address, no prefix. The id must match `^[\w.:-]{1,128}$`; the hourly suffix makes repeats within the hour router-level duplicates.
-3. The address must be the **viewer** IP (`CloudFront-Viewer-Address`), never `X-Forwarded-For`, or anyone could get a third party blocked. The guard still refuses non-global, never-block-listed, stale or malformed addresses, and blocks expire only by hand (D15).
+3. The address must be the **viewer** IP (`CloudFront-Viewer-Address`), never `X-Forwarded-For`, or anyone could get a third party blocked. The guard and PB-05 still refuse non-global, never-block-listed, stale or malformed addresses, and blocks are lifted automatically by the sweeper at `blockExpiresAt` (D15, audit A2).

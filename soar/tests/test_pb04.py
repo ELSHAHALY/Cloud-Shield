@@ -154,6 +154,13 @@ class Ecs:
             {"cluster": CLUSTER, "services": [SERVICE], "include": ["TAGS"]},
         )
 
+    def list_tasks(self, arns: list[str], desired: str = "RUNNING") -> None:
+        self.stub.add_response(
+            "list_tasks",
+            {"taskArns": arns},
+            {"cluster": CLUSTER, "serviceName": SERVICE, "desiredStatus": desired},
+        )
+
     def describe_task_definition(self) -> None:
         self.stub.add_response(
             "describe_task_definition", TASK_DEF_RESPONSE, {"taskDefinition": TASK_DEF}
@@ -182,9 +189,10 @@ class Ecs:
         task_response: dict[str, Any] | None = None,
         service_response: dict[str, Any] | None = None,
     ) -> None:
-        """The reads before any mutation: scope + cross-check + capture."""
+        """The reads before any mutation: scope + ownership + capture."""
         self.describe_task(task_response or task())
         self.describe_service(service_response or service())
+        self.list_tasks([TASK])
         self.describe_task_definition()
 
 
@@ -251,6 +259,7 @@ def test_contain_stops_task_redeploys_and_verifies(world: Any) -> None:
     # Capture strictly BEFORE StopTask, cross-check strictly before too.
     assert ecs.ops.index("DescribeTaskDefinition") < ecs.ops.index("StopTask")
     assert ecs.ops.index("DescribeServices") < ecs.ops.index("StopTask")
+    assert ecs.ops.index("ListTasks") < ecs.ops.index("StopTask")
     assert ecs.ops.index("StopTask") < ecs.ops.index("UpdateService")
     row = world.incident(event["detail"]["id"])
     assert [a["step"] for a in row["actions"]] == ["capture-prestate", "stop-task", "redeploy"]
@@ -410,17 +419,37 @@ def test_stale_primary_does_not_count_as_fresh(world: Any) -> None:
 
 
 # ------------------------------------------------------------ refusals
-def test_started_by_not_a_service_deployment_raises_before_stop(world: Any) -> None:
-    # A forged `group` cannot make PB-04 redeploy the wrong service: the task
-    # must have been started by one of THIS service's deployments.
+def test_task_not_listed_by_the_service_raises_before_stop(world: Any) -> None:
+    # A forged `group` (or startedBy) cannot make PB-04 redeploy the wrong
+    # service: ECS itself must list the task under THIS service (audit A4).
     event = seed(world)
     ecs = Ecs()
     ecs.describe_task(task(started_by="ecs-svc/9999999999999999999"))
     ecs.describe_service(service())
-    with pytest.raises(PlaybookError, match="not started by a deployment"):
+    other = TASK[:-32] + "f" * 32
+    ecs.list_tasks([other], "RUNNING")
+    ecs.list_tasks([], "STOPPED")
+    with pytest.raises(PlaybookError, match="does not list the task under service docs-api"):
         pb04(world, ecs).handle(events.payload("contain", event))
+    ecs.stub.assert_no_pending_responses()
     assert "StopTask" not in ecs.ops
     assert "UpdateService" not in ecs.ops
+
+
+def test_task_listed_as_stopped_counts_as_a_member(world: Any) -> None:
+    # An already-stopping task is listed under desiredStatus STOPPED only.
+    event = seed(world)
+    ecs = Ecs()
+    ecs.describe_task(STOPPED)
+    ecs.describe_service(service())
+    ecs.list_tasks([], "RUNNING")
+    ecs.list_tasks([TASK], "STOPPED")
+    ecs.describe_task_definition()
+    ecs.redeploy()
+    ecs.verify_round(STOPPED, REDEPLOYED)
+    result = pb04(world, ecs).handle(events.payload("contain", event))
+    assert result["contained"] is True
+    assert result["taskStop"] == "already-stopped"
 
 
 def test_untagged_service_raises(world: Any) -> None:
@@ -512,6 +541,7 @@ def test_task_definition_read_error_does_not_block_containment(world: Any) -> No
     ecs = Ecs()
     ecs.describe_task(task())
     ecs.describe_service(service())
+    ecs.list_tasks([TASK])
     ecs.stub.add_client_error("describe_task_definition", "ThrottlingException")
     ecs.stop()
     ecs.redeploy()

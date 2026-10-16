@@ -226,6 +226,40 @@ override_resource {
   values = {}
 }
 
+# Audit A2 (persistence table + auto-expiry sweeper): overridden too.
+override_resource {
+  target = aws_dynamodb_table.harvest_state
+  values = { arn = "arn:aws:dynamodb:us-east-1:123456789012:table/cs-test-soar-pb05-harvest-state", name = "cs-test-soar-pb05-harvest-state" }
+}
+override_resource {
+  target = aws_iam_role.sweeper
+  values = { arn = "arn:aws:iam::123456789012:role/cs-test-soar-pb05-sweeper", id = "cs-test-soar-pb05-sweeper" }
+}
+override_resource {
+  target = aws_iam_role_policy.sweeper
+  values = {}
+}
+override_resource {
+  target = aws_cloudwatch_log_group.sweeper
+  values = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/cs-test-soar-pb05-sweeper" }
+}
+override_resource {
+  target = aws_lambda_function.sweeper
+  values = { arn = "arn:aws:lambda:us-east-1:123456789012:function:cs-test-soar-pb05-sweeper", function_name = "cs-test-soar-pb05-sweeper" }
+}
+override_resource {
+  target = aws_cloudwatch_event_rule.sweep
+  values = { arn = "arn:aws:events:us-east-1:123456789012:rule/cs-test-soar-pb05-sweep" }
+}
+override_resource {
+  target = aws_cloudwatch_event_target.sweep
+  values = {}
+}
+override_resource {
+  target = aws_lambda_permission.sweep
+  values = {}
+}
+
 # Phase D stage 2c (ChatOps notifier): every new managed resource, overridden.
 override_resource {
   target = aws_iam_role.notifier
@@ -407,18 +441,25 @@ run "pb04_ecs_mutations_scoped_to_cluster_and_tag" {
   assert {
     condition = alltrue([
       for s in jsondecode(data.aws_iam_policy_document.pb04[0].json).Statement :
-      flatten([s.Action]) == ["ecs:DescribeTaskDefinition"]
+      flatten([s.Action]) == ["ecs:DescribeTaskDefinition"] || (flatten([s.Action]) == ["ecs:ListTasks"] && try(s.Condition.ArnEquals["ecs:cluster"], null) == "arn:aws:ecs:us-east-1:123456789012:cluster/cs-test-cluster")
       if contains(flatten([s.Resource]), "*")
     ])
-    error_message = "Only DescribeTaskDefinition (no resource-level support) may use Resource \"*\"."
+    error_message = "Only DescribeTaskDefinition (no resource-level support) and ListTasks (scoped by ecs:cluster) may use Resource \"*\"."
   }
   assert {
     condition = alltrue([
       for s in jsondecode(data.aws_iam_policy_document.pb04[0].json).Statement :
       try(s.Condition.ArnEquals["ecs:cluster"], null) == "arn:aws:ecs:us-east-1:123456789012:cluster/cs-test-cluster"
-      if anytrue([for a in flatten([s.Action]) : contains(["ecs:DescribeTasks", "ecs:DescribeServices"], a)])
+      if anytrue([for a in flatten([s.Action]) : contains(["ecs:DescribeTasks", "ecs:DescribeServices", "ecs:ListTasks"], a)])
     ])
-    error_message = "ECS reads must carry the ecs:cluster condition too."
+    error_message = "ECS reads (incl. the ListTasks ownership proof, audit A4) must carry the ecs:cluster condition."
+  }
+  assert {
+    condition = length([
+      for s in jsondecode(data.aws_iam_policy_document.pb04[0].json).Statement : s
+      if contains(flatten([s.Action]), "ecs:ListTasks")
+    ]) == 1
+    error_message = "PB-04 proves task ownership with ecs:ListTasks (audit A4)."
   }
   assert {
     condition = !anytrue(flatten([
@@ -434,26 +475,25 @@ run "pb04_ecs_mutations_scoped_to_cluster_and_tag" {
 run "pb05_only_appends_to_the_two_ip_sets" {
   command = apply
 
+  # Audit A1: besides the two IP sets, exactly the corroboration read on the
+  # CloudFront ACL and the never-block parameter. Nothing else new.
   assert {
-    condition = sort(distinct(flatten([
-      for s in jsondecode(data.aws_iam_policy_document.pb05[0].json).Statement : flatten([s.Action])
-    ]))) == tolist(["wafv2:GetIPSet", "wafv2:UpdateIPSet"])
-    error_message = "PB-05 may only GetIPSet / UpdateIPSet."
-  }
-  assert {
-    condition = sort(distinct(flatten([
-      for s in jsondecode(data.aws_iam_policy_document.pb05[0].json).Statement : flatten([s.Resource])
-      ]))) == sort([
-      "arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v4/11111111-1111-1111-1111-111111111111",
-      "arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v6/22222222-2222-2222-2222-222222222222",
-    ])
-    error_message = "PB-05 may touch exactly the two block-list IP sets."
+    condition = jsonencode({
+      for s in jsondecode(data.aws_iam_policy_document.pb05[0].json).Statement :
+      join(",", sort(flatten([s.Action]))) => sort(flatten([s.Resource]))
+      }) == jsonencode({
+      "wafv2:GetIPSet,wafv2:UpdateIPSet"       = ["arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v4/11111111-1111-1111-1111-111111111111", "arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v6/22222222-2222-2222-2222-222222222222"]
+      "wafv2:GetRateBasedStatementManagedKeys" = ["arn:aws:wafv2:us-east-1:123456789012:global/webacl/cs-test-cloudfront/33333333-3333-3333-3333-333333333333"]
+      "ssm:GetParameter"                       = ["arn:aws:ssm:us-east-1:123456789012:parameter/cs-test/soar/pb05_never_block"]
+    })
+    error_message = "PB-05 gets Get/UpdateIPSet on the two sets, GetRateBasedStatementManagedKeys on the CloudFront ACL and GetParameter on the never-block list, nothing else."
   }
   assert {
     condition = !anytrue(flatten([
       for doc in [
         data.aws_iam_policy_document.pb05[0].json,
         data.aws_iam_policy_document.harvester[0].json,
+        data.aws_iam_policy_document.sweeper[0].json,
         data.aws_iam_policy_document.pb04[0].json,
         data.aws_iam_policy_document.safety_guard.json,
         ] : [
@@ -471,14 +511,16 @@ run "harvester_reads_keys_and_publishes_only" {
   command = apply
 
   assert {
-    condition = {
+    condition = jsonencode({
       for s in jsondecode(data.aws_iam_policy_document.harvester[0].json).Statement :
-      join(",", flatten([s.Action])) => flatten([s.Resource])
-      } == {
+      join(",", sort(flatten([s.Action]))) => sort(flatten([s.Resource]))
+      }) == jsonencode({
       "wafv2:GetRateBasedStatementManagedKeys" = ["arn:aws:wafv2:us-east-1:123456789012:global/webacl/cs-test-cloudfront/33333333-3333-3333-3333-333333333333"]
       "events:PutEvents"                       = ["arn:aws:events:us-east-1:123456789012:event-bus/cs-test-soar-edge"]
-    }
-    error_message = "The harvester gets exactly GetRateBasedStatementManagedKeys on the ACL and PutEvents on the edge bus."
+      "dynamodb:GetItem,dynamodb:PutItem"      = ["arn:aws:dynamodb:us-east-1:123456789012:table/cs-test-soar-pb05-harvest-state"]
+      "kms:Decrypt"                            = ["arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"]
+    })
+    error_message = "The harvester gets exactly the managed keys on the ACL, PutEvents on the edge bus, Get/PutItem on its sighting table and kms:Decrypt on the SOAR key."
   }
   assert {
     condition = alltrue([
@@ -540,6 +582,32 @@ run "guard_reads_ecs_task_and_never_block_list" {
       alltrue([for a in flatten([s.Action]) : startswith(a, "ssm:Get") || startswith(a, "ec2:Describe") || startswith(a, "iam:List") || startswith(a, "s3:GetBucketTagging") || a == "ecs:DescribeTasks"])
     ])
     error_message = "The guard stays read-only."
+  }
+}
+
+# Sweeper (audit A2): exactly Get/UpdateIPSet on the two sets, Scan/UpdateItem
+# on the incidents table, decrypt with the SOAR key, and its own logs.
+run "sweeper_policy_is_exactly_its_grants" {
+  command = apply
+
+  assert {
+    condition = jsonencode({
+      for s in jsondecode(data.aws_iam_policy_document.sweeper[0].json).Statement :
+      join(",", sort(flatten([s.Action]))) => sort(flatten([s.Resource]))
+      }) == jsonencode({
+      "wafv2:GetIPSet,wafv2:UpdateIPSet"       = ["arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v4/11111111-1111-1111-1111-111111111111", "arn:aws:wafv2:us-east-1:123456789012:global/ipset/cs-test-soar-blocked-ips-v6/22222222-2222-2222-2222-222222222222"]
+      "dynamodb:Scan,dynamodb:UpdateItem"      = ["arn:aws:dynamodb:us-east-1:123456789012:table/cs-test-soar-incidents"]
+      "kms:Decrypt"                            = ["arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"]
+      "logs:CreateLogStream,logs:PutLogEvents" = ["arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/cs-test-soar-pb05-sweeper:*"]
+    })
+    error_message = "The sweeper role gets exactly the two IP sets, Scan/UpdateItem on the incidents table, kms:Decrypt and its own logs."
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(data.aws_iam_policy_document.sweeper[0].json).Statement :
+      s.Effect == "Allow" && try(s.Condition, null) == null
+    ])
+    error_message = "The sweeper policy is four plain Allow statements."
   }
 }
 

@@ -132,9 +132,10 @@ _SCENARIO_E = Triage(
         "Check the application audit trail for requests from the address that succeeded.",
     ),
     recovery=(
-        "Nothing removes the block automatically (D15): list overdue blocks with "
-        "tools/list_expired_blocks.py.",
-        f"Remove the address from the IP set by hand when it is safe ({RUNBOOK_PB04_PB05}).",
+        "The PB-05 sweeper lifts the block automatically once blockExpiresAt has passed "
+        "(D15); tools/list_expired_blocks.py cross-checks expired, lost and orphan entries.",
+        "Lift it early by hand if the address is shared (NAT, carrier gateway) or a false "
+        f"positive ({RUNBOOK_PB04_PB05}).",
     ),
     references=(PLAN_PB05, ADR_PB04_PB05, RUNBOOK_PB04_PB05),
 )

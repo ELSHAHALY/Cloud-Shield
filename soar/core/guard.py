@@ -11,8 +11,14 @@ Rule 3 has two Phase D branches (plan §4.1, §4.2):
   the scope tag, sit in ECS_CLUSTER_ARN and belong to an allowed service.
   Tags embedded in the finding are never trusted.
 * IP address (PB-05), which has no tags: the event must come from the edge
-  source and be fresh, the address must be global unicast, and it must not be
-  on the never-block list, which is read on every call (unreadable -> refuse).
+  source, carry an allow-listed edge finding type and be fresh, the address
+  must be global unicast, and it must not be on the never-block list, which
+  is read on every call (unreadable -> refuse).
+
+The guard only sees what the caller wrote. Anyone who can start cs-ir-router
+can write a "fresh edge event", so PB-05 itself re-reads the never-block list
+and corroborates the address with WAF (the rate rule's managed keys) before it
+blocks anything (audit A1).
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from botocore.exceptions import ClientError
 from core.aws import error_code
 from core.config import Settings
 from core.finding import (
+    EDGE_FINDING_TYPES,
     Ec2Target,
     EcsTaskTarget,
     Finding,
@@ -284,6 +291,9 @@ class SafetyGuard:
         # Rule 1: edge source, fresh event.
         if finding.source != settings.edge_event_source:
             return Decision(False, dry_run, "event is not from the edge source")
+        # Only edge finding types PB-05 knows how to corroborate (audit A1).
+        if finding.type not in EDGE_FINDING_TYPES:
+            return Decision(False, dry_run, "edge finding type is not allowed")
         now = self._clock()
         if not now - EDGE_MAX_AGE <= finding.event_time <= now + EDGE_MAX_FUTURE:
             return Decision(False, dry_run, "edge event outside the freshness window")

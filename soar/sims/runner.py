@@ -83,7 +83,11 @@ def replay_local(
 
     event = scenarios.build_event(scenario, ctx.account_id, ctx.region, **targets)
     settings = _settings(ctx.name_prefix.rstrip("-"), ctx.account_id, ctx.region)
-    outcome = run_local(event, settings, clients)
+    # D/E (D20): the guard and the playbook get a switch that always reads
+    # "dry-run", whatever the SSM parameter says by then (audit A10).
+    outcome = run_local(
+        event, settings, clients, force_dry_run=scenario.key in scenarios.DRY_RUN_ONLY
+    )
     status = outcome.get("status", "UNKNOWN")
     passed = status in {"CONTAINED", "WOULD_CONTAIN_DRY_RUN"}
     return SimResult(
