@@ -57,3 +57,15 @@
 # Ownership rules themselves: any of the three (pair with required approvals = 2).
 /.github/CODEOWNERS                         @ELSHAHALY @YasseenAbdelghany @ahklsfg
 /docs/adr/                                  @ELSHAHALY @YasseenAbdelghany @ahklsfg
+
+# ---------------- Phase E: app security-critical paths ----------------
+# The SOC read model and the decoy publish into S3's domain (TB5, edge bus).
+/app/docs-api/src/soc/                      @YasseenAbdelghany @ahklsfg
+/app/docs-api/src/decoy/                    @YasseenAbdelghany @ahklsfg
+# Token verification and the production image are platform-critical.
+/app/docs-api/src/auth/                     @YasseenAbdelghany @ELSHAHALY
+/app/docs-api/src/config.ts                 @YasseenAbdelghany @ELSHAHALY
+/app/docs-api/Dockerfile                    @YasseenAbdelghany @ELSHAHALY
+/app/grc/                                   @YasseenAbdelghany @ahklsfg
+/docker-compose.local.yml                   @YasseenAbdelghany @ELSHAHALY
+/infra/terraform/modules/soar/app-integration.tf  @ahklsfg @YasseenAbdelghany

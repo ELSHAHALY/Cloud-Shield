@@ -1,6 +1,6 @@
 # ADR-0005: PB-04 (ECS task containment) and PB-05 (WAF IP block)
 
-- **Status:** Accepted (16 Oct 2026); amended the same day after the Phase D audit (A1–A11, see "Audit amendments")
+- **Status:** Accepted (16 Oct 2026); amended the same day after the Phase D audit (A1–A11, see "Audit amendments") and by Phase E (`DecoyRouteHit` is notify-only, see "Phase E amendment")
 - **Deciders:** @ahklsfg (S3, owner), @ELSHAHALY (S1: compute service and edge IP sets)
 - **Relates to:** plan `docs/plans/s1-s2-edge-identity-waf.md` §4 (D12–D15, D19, D20) and §5 (D16, D17); ADR-0003 (the same "Terraform never lifts a containment" principle); ADR-0004 (where a block takes effect)
 
@@ -84,6 +84,17 @@ The edge bus is the automatic path, **not** the only one (audit A1). The control
 - **A5** Every type-based router choice also requires its `resourceType`; the edge-bus rule is pinned to the `CloudShield:IPAddress/` type prefix; `sims/local_router._route` mirrors it.
 - **A10** Dry-run-only sims D/E use an always-dry-run reader after the runner's gate.
 - **A11** IP-set recreation drops blocks (below).
+
+## Phase E amendment (16 Oct): `DecoyRouteHit` is notify-only
+
+docs-api now publishes `CloudShield:IPAddress/DecoyRouteHit` on the edge bus (ADR-0006, plan D13–D15). A1 is **not** weakened:
+
+- `core/finding.py` gains `EDGE_NOTIFY_ONLY_TYPES = {CloudShield:IPAddress/DecoyRouteHit}`; it is **not** in `EDGE_FINDING_TYPES`.
+- The guard (`_ip`, after the edge-source check) returns `allowed: false` with the reason `notify-only edge finding (decoy route hit): analyst review`. The router records `BLOCKED_BY_GUARD` and runs `Notify` (SNS + ChatOps). The hourly id makes repeats router-level duplicates.
+- PB-05 still refuses any type outside its allow-list, even when invoked directly with a forged `allowed` decision (`test_pb05.py`).
+- The publisher is derived in `modules/soar` (`app_publishes_decoy`): the task role joins the bus Allow list and the Deny's exemption, and its `PutEvents` grant is conditioned on `events:source` and `events:detail-type`.
+
+Corroborated blocking (a WAF rule on `/api/admin` that PB-05 can read) is a recorded follow-up; until then, blocking a decoy caller is an analyst decision (`docs/runbooks/decoy-route.md`).
 
 ## Consequences
 

@@ -1,0 +1,113 @@
+# CloudShield local stack (plan §10, D21/D22). DEV ONLY.
+#   make local-up     # build + start; UI on http://localhost:3000
+#   make local-smoke  # end-to-end checks
+#   make local-down
+# moto server stands in for AWS (Apache-2.0; no LocalStack licence needed).
+# docs-api is the PRODUCTION image, switched to local mode, which the config
+# validator only allows next to a local emulator endpoint. Every container
+# runs non-root with a read-only root filesystem and no capabilities.
+name: cloudshield-local
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+
+x-aws-local: &aws-local
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: local-only
+  AWS_SECRET_ACCESS_KEY: local-only
+  AWS_ENDPOINT_URL: http://moto:5000
+
+services:
+  moto:
+    image: motoserver/moto:5.2.4@sha256:120b1589c6df7e35d2092935f6ff724486bb2c4189d0e36ce795baba1400ffd2
+    <<: *hardened
+    environment:
+      MOTO_PORT: "5000"
+    ports:
+      - "127.0.0.1:5000:5000" # the browser follows pre-signed download URLs here
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/moto-api/')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  local-idp:
+    build:
+      context: ./app
+      dockerfile: local-dev/Dockerfile
+      target: idp
+    <<: *hardened
+    user: "1000:1000"
+    environment:
+      CLOUDSHIELD_ENV: local
+      LOCAL_IDP_ISSUER: http://local-idp:9000
+      COGNITO_CLIENT_ID: cloudshield-local-spa
+
+  seed:
+    build:
+      context: ./app
+      dockerfile: local-dev/Dockerfile
+      target: seed
+    <<: *hardened
+    user: "1000:1000"
+    restart: "no"
+    depends_on:
+      moto:
+        condition: service_healthy
+    environment:
+      <<: *aws-local
+      CLOUDSHIELD_ENV: local
+
+  docs-api:
+    build:
+      context: ./app
+      dockerfile: docs-api/Dockerfile
+    <<: *hardened
+    user: "1000:1000"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      local-idp:
+        condition: service_healthy
+    environment:
+      <<: *aws-local
+      CLOUDSHIELD_ENV: local
+      S3_PUBLIC_ENDPOINT: http://localhost:5000
+      AUTH_LOCAL_ISSUER: http://local-idp:9000
+      AUTH_LOCAL_JWKS_URI: http://local-idp:9000/.well-known/jwks.json
+      COGNITO_CLIENT_ID: cloudshield-local-spa
+      DOCUMENTS_TABLE: cloudshield-local-documents
+      AUDIT_TABLE: cloudshield-local-audit
+      DOCUMENTS_BUCKET: cloudshield-local-documents
+      DATA_KMS_KEY_ARN: arn:aws:kms:us-east-1:123456789012:key/00000000-0000-4000-8000-00000000c0de
+      PRESIGNED_URL_MAX_SECONDS: "300"
+      MAX_UPLOAD_BYTES: "5242880"
+      INCIDENTS_TABLE: cloudshield-local-soar-incidents
+      INCIDENTS_STATUS_INDEX: status-eventTime
+      EVIDENCE_BUCKET: cloudshield-local-soar-evidence
+      SOAR_DRY_RUN_PARAM: /cloudshield-local/soar/dry_run
+      SOAR_PLAYBOOKS_ENABLED: "true"
+      EDGE_EVENT_SOURCE: cloudshield.edge
+      EDGE_BUS_NAME: cloudshield-local-soar-edge
+      DECOY_PUBLISH_ENABLED: "true"
+      AWS_ACCOUNT_ID: "123456789012"
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "dist/healthcheck.js"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  spa:
+    build:
+      context: ./app/spa
+      target: local
+    <<: *hardened
+    tmpfs: [/tmp, /var/cache/nginx]
+    depends_on:
+      docs-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:8080"

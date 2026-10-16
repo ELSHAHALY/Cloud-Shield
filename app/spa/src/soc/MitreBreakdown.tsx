@@ -5,17 +5,18 @@ export function MitreBreakdown({ byTactic }: { byTactic: SocMetrics["byTactic"] 
   const max = Math.max(...byTactic.map((t) => t.count));
   const rowH = 22;
   return (
-    <svg role="img" aria-label={`Incidents by ATT&CK tactic: ${byTactic.map((t) => `${t.tactic} ${t.count}`).join(", ")}`} viewBox={`0 0 420 ${byTactic.length * rowH + 4}`} className="w-full max-w-xl">
+    <svg role="img" aria-label={`Incidents by ATT&CK tactic: ${byTactic.map((t) => `${t.tactic} ${t.count}`).join(", ")}`} viewBox={`0 0 560 ${byTactic.length * rowH + 4}`} className="w-full max-w-xl">
       {byTactic.map((t, i) => {
-        const w = Math.max(2, (t.count / max) * 180);
+        const w = Math.max(2, (t.count / max) * 160);
         const y = i * rowH + 4;
         return (
           <g key={t.tactic}>
             <text x="0" y={y + 12} fontSize="10" fill="#0f172a">
-              {t.tactic}
+              {t.tactic.length > 40 ? `${t.tactic.slice(0, 39)}…` : t.tactic}
+              <title>{t.tactic}</title>
             </text>
-            <rect x="130" y={y + 2} width={w} height="12" rx="3" fill="#4f46e5" />
-            <text x={136 + w} y={y + 12} fontSize="10" fill="#334155">
+            <rect x="230" y={y + 2} width={w} height="12" rx="3" fill="#4f46e5" />
+            <text x={236 + w} y={y + 12} fontSize="10" fill="#334155">
               {t.count} {t.techniques.length ? `(${t.techniques.join(", ")})` : ""}
             </text>
           </g>

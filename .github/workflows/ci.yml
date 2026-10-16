@@ -36,6 +36,10 @@ env:
   TRIVY_IMAGE: "aquasec/trivy:0.75.0"
   CHECKOV_VERSION: "3.3.26"
   APP_DIR: ${{ vars.APP_DIR || 'app/docs-api' }}
+  # Phase E D2: the docs-api image is built with context app/ so the contract
+  # (app/openapi.yaml) and the GRC data are inside it.
+  IMAGE_CONTEXT: ${{ vars.IMAGE_CONTEXT || 'app' }}
+  HADOLINT_IMAGE: "hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -98,6 +102,8 @@ jobs:
             --config p/owasp-top-ten \
             --config p/nodejs \
             --config p/python \
+            --config p/typescript \
+            --config p/react \
             --severity ERROR \
             --error \
             --metrics off \
@@ -177,6 +183,96 @@ jobs:
         working-directory: .
         run: python scripts/package_soar.py --out build/soar-playbooks.zip
 
+      # Phase E D17: docs-api triages from a JSON export of core/attack.py.
+      - name: ATT&CK table export in sync with docs-api
+        run: python -m tools.export_attack_table --check ../app/docs-api/src/soc/attack-table.generated.json
+
+  # ---------------------------------------------------------------------------
+  # App (Phase E D27): docs-api (Jest against a moto service), SPA (Vitest,
+  # vite build), local-dev tooling, OpenAPI/type drift, Dockerfile lint and the
+  # compose file. A correctness gate like `soar`: it always hard-fails.
+  # ---------------------------------------------------------------------------
+  app:
+    name: "gate: app (lint + typecheck + test + build)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      moto:
+        image: motoserver/moto:5.2.4@sha256:120b1589c6df7e35d2092935f6ff724486bb2c4189d0e36ce795baba1400ffd2
+        ports:
+          - 5000:5000
+        options: >-
+          --health-cmd "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/moto-api/')\""
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      MOTO_ENDPOINT: http://localhost:5000
+      AWS_ACCESS_KEY_ID: local-only
+      AWS_SECRET_ACCESS_KEY: local-only
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            app/docs-api/package-lock.json
+            app/spa/package-lock.json
+            app/local-dev/package-lock.json
+
+      - name: "docs-api: install, lint, typecheck, OpenAPI drift"
+        working-directory: app/docs-api
+        run: |
+          npm ci --ignore-scripts
+          npm run lint -- --max-warnings 0
+          npm run typecheck
+          npm run openapi:check
+
+      - name: "docs-api: Jest (moto) with coverage gate"
+        working-directory: app/docs-api
+        run: npx jest --coverage --ci
+
+      - name: "spa: install, lint, typecheck, Vitest with coverage"
+        working-directory: app/spa
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+          npm run typecheck
+          npx vitest run --coverage
+
+      - name: "spa: production build without the local auth branch"
+        working-directory: app/spa
+        env:
+          VITE_AUTH_MODE: cognito
+          VITE_COGNITO_USER_POOL_ID: us-east-1_Placeholder
+          VITE_COGNITO_CLIENT_ID: placeholderclientid
+          VITE_AWS_REGION: us-east-1
+        run: |
+          npm run build
+          node scripts/check-bundle.mjs dist
+          ! grep -R "local-idp" dist/
+
+      - name: "local-dev: install, lint, typecheck, test"
+        working-directory: app/local-dev
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+          npm run typecheck
+          npx jest --ci
+
+      - name: hadolint (all Dockerfiles)
+        run: |
+          for f in app/docs-api/Dockerfile app/spa/Dockerfile app/local-dev/Dockerfile; do
+            echo "== $f"
+            docker run --rm -i -v "$PWD:/w:ro" -w /w "$HADOLINT_IMAGE" hadolint --config /w/.hadolint.yaml "$f"
+          done
+
+      - name: docker compose config
+        run: docker compose -f docker-compose.local.yml config -q
+
   # ---------------------------------------------------------------------------
   # Gate 4 — IaC (terraform fmt/validate + Checkov).
   # ---------------------------------------------------------------------------
@@ -237,6 +333,8 @@ jobs:
             --framework terraform \
             --quiet --compact \
             --download-external-modules false
+          # Phase E: the app Dockerfiles (same fail-open step).
+          checkov -d app --framework dockerfile --quiet --compact
 
       - name: Report (fail-open)
         if: steps.scan.outcome == 'failure'
@@ -252,7 +350,7 @@ jobs:
     name: "gate: image (trivy image + sbom)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [secrets, sast, sca]
+    needs: [secrets, sast, sca, app]
     permissions:
       contents: read
       id-token: write   # OIDC for the ECR push role (main only); scoped to this job
@@ -273,7 +371,26 @@ jobs:
 
       - name: Build image
         if: steps.detect.outputs.present == 'true'
-        run: docker build --pull -t "cloudshield/app:${GITHUB_SHA}" "$APP_DIR"
+        # Build args are the REAL gate outcomes, baked into build-info.json
+        # (plan D18); the image cannot contain its own Trivy result.
+        env:
+          GATE_SECRETS: ${{ needs.secrets.outputs.scan }}
+          GATE_SAST: ${{ needs.sast.outputs.scan }}
+          GATE_SCA: ${{ needs.sca.outputs.scan }}
+          GATE_APP: ${{ needs.app.result }}
+          GATES_ENFORCED: ${{ vars.ENFORCE_GATES == 'true' }}
+        run: |
+          docker build --pull --platform linux/amd64 \
+            -f "$APP_DIR/Dockerfile" \
+            --build-arg GIT_SHA="$GITHUB_SHA" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg CI_RUN_ID="$GITHUB_RUN_ID" \
+            --build-arg GATE_SECRETS="$GATE_SECRETS" \
+            --build-arg GATE_SAST="$GATE_SAST" \
+            --build-arg GATE_SCA="$GATE_SCA" \
+            --build-arg GATE_APP="$GATE_APP" \
+            --build-arg GATES_ENFORCED="$GATES_ENFORCED" \
+            -t "cloudshield/app:${GITHUB_SHA}" "$IMAGE_CONTEXT"
 
       - name: Trivy image scan (fixable CRITICAL/HIGH fails)
         id: scan
@@ -323,7 +440,8 @@ jobs:
           steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
           needs.secrets.outputs.scan == 'success' &&
           needs.sast.outputs.scan == 'success' &&
-          needs.sca.outputs.scan == 'success'
+          needs.sca.outputs.scan == 'success' &&
+          needs.app.result == 'success'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
@@ -337,7 +455,8 @@ jobs:
           steps.detect.outputs.present == 'true' && steps.scan.outcome == 'success' &&
           needs.secrets.outputs.scan == 'success' &&
           needs.sast.outputs.scan == 'success' &&
-          needs.sca.outputs.scan == 'success'
+          needs.sca.outputs.scan == 'success' &&
+          needs.app.result == 'success'
         env:
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
@@ -370,6 +489,41 @@ jobs:
             echo "${ECR_REPOSITORY}@${digest}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Local stack smoke (Phase E §11.7). Not a required check at first: builds the
+  # compose stack (moto, local IdP, seed, docs-api, SPA) and runs the five
+  # end-to-end checks of plan §14.
+  # ---------------------------------------------------------------------------
+  app-smoke:
+    name: "app-smoke (docker compose, optional)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [app]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+          cache: npm
+          cache-dependency-path: app/local-dev/package-lock.json
+
+      - name: Build and start the local stack
+        run: make local-up
+
+      - name: Smoke checks
+        run: make local-smoke
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.local.yml logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: make local-down
 
   # ---------------------------------------------------------------------------
   # Terraform plan via OIDC (read-only role). Runs only once bootstrap is done

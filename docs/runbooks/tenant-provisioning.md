@@ -13,7 +13,7 @@ POOL=$(terraform output -raw cognito_user_pool_id)   # or: module.identity user_
 aws sts get-caller-identity                          # confirm the account first
 ```
 
-Choose the tenant id carefully: 1–64 characters, stable, not personal data (for example `t-acme-01`). It can never be changed for this user.
+Choose the tenant id carefully: stable, not personal data, and matching the format docs-api enforces (Phase E D7): `^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`, that is 1–64 lowercase letters, digits and inner hyphens (for example `t-acme-01`). Cognito accepts other strings, but the API answers **403 `TENANT_INVALID`** for them (fail closed). Ids starting with `_` are reserved (`_platform`). It can never be changed for this user.
 
 ## 1. Create the user
 
@@ -53,6 +53,16 @@ aws cognito-idp admin-get-user --user-pool-id "$POOL" --username "user@example.c
   --query 'UserAttributes[?Name==`custom:tenant_id`]'
 aws cognito-idp admin-list-groups-for-user --user-pool-id "$POOL" --username "user@example.com"
 ```
+
+## 4. First sign-in: onboarding (Phase E D26)
+
+The tenant's **first** user should be its `admin`. At first sign-in the SPA routes the admin to `/onboarding`:
+
+1. Read the DPA and the SLA (plain text) and tick "I confirm I have authority to bind <tenant> to this agreement", then **Accept**. The API records click-through acceptance (user, time, text SHA-256, source IP, request id). It is evidence of acceptance, not a qualified or advanced electronic signature; the texts are templates.
+2. Until every required agreement is accepted, document uploads and changes answer **403 `AGREEMENT_REQUIRED`** for everyone in the tenant (reads still work).
+3. Set the tenant's GRC profile (`/grc`): jurisdictions (EG / EU / SA), sector, CBE regulation, data categories. The assessment is informational, not legal advice.
+
+Members and auditors see "Waiting for your tenant administrator to accept…".
 
 ## Moving a user to another tenant
 

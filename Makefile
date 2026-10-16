@@ -6,7 +6,8 @@ TF_TEST_DIRS := $(patsubst %/tests,%,$(wildcard infra/terraform/modules/*/tests)
 
 PYTHON ?= python3
 
-.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report expired-blocks
+.PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report expired-blocks \
+        app-lint app-test app-build dockerlint local-up local-down local-seed local-smoke local-moto
 
 help:
 	@echo "make scan           - every local gate (secrets, sast, sca, iac, soar)"
@@ -20,14 +21,21 @@ help:
 	@echo "make sim            - attack sim: SCENARIO=a|a-recon|b|c|d|e MODE=replay [TARGET=local|aws]"
 	@echo "make ir-report      - IR report from an incident: INCIDENT=<id> [FMT=md|json]"
 	@echo "make expired-blocks - audit PB-05 IP blocks: expired, lost, orphans (read-only)"
+	@echo "make app-lint       - ESLint + tsc + OpenAPI drift for docs-api, spa, local-dev"
+	@echo "make app-test       - Jest (docs-api, local-dev; needs moto: make local-moto) + Vitest (spa)"
+	@echo "make app-build      - docs-api image + SPA production build (bundle check)"
+	@echo "make dockerlint     - hadolint + Checkov on the app Dockerfiles"
+	@echo "make local-up       - docker compose local stack; UI on http://localhost:3000"
+	@echo "make local-smoke    - end-to-end checks against the local stack"
+	@echo "make local-down     - stop the local stack and drop its data"
 
-scan: secrets sast sca iac soar-lint soar-test
+scan: secrets sast sca iac soar-lint soar-test app-lint app-test dockerlint
 
 secrets:
 	gitleaks git . --redact --verbose
 
 sast:
-	semgrep scan --config p/owasp-top-ten --config p/nodejs --config p/python --severity ERROR --error --metrics off --exclude infra/ --exclude docs/
+	semgrep scan --config p/owasp-top-ten --config p/nodejs --config p/python --config p/typescript --config p/react --severity ERROR --error --metrics off --exclude infra/ --exclude docs/
 
 # pip install -r soar/requirements-dev.txt first.
 soar-lint:
@@ -42,7 +50,7 @@ package-soar:
 	$(PYTHON) scripts/package_soar.py --out build/soar-playbooks.zip
 
 sca:
-	trivy fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-dirs infra .
+	trivy fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-dirs infra --skip-dirs "**/node_modules" .
 
 iac: fmt validate test
 	checkov -d infra/terraform --framework terraform --quiet --compact
@@ -90,3 +98,44 @@ ir-report:
 # Needs dynamodb:Scan + kms:Decrypt (SOAR key) + wafv2:GetIPSet.
 expired-blocks:
 	cd soar && $(PYTHON) -m tools.list_expired_blocks --table $(NAME)-soar-incidents --region $(REGION) --format $(if $(filter json,$(FMT)),json,text)
+
+# ---- Phase E: app (docs-api, spa, local-dev) and the local stack ----
+APP_PKGS := app/docs-api app/spa app/local-dev
+COMPOSE  := docker compose -f docker-compose.local.yml
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.14.0
+
+app-lint:
+	@for d in $(APP_PKGS); do echo "== lint $$d"; (cd $$d && npm ci --ignore-scripts >/dev/null && npm run lint && npm run typecheck) || exit 1; done
+	cd app/docs-api && npm run openapi:check
+
+# Jest suites marked *.int.test.ts need moto on MOTO_ENDPOINT (default http://localhost:5000).
+app-test:
+	cd app/docs-api && npx jest --coverage
+	cd app/local-dev && npx jest
+	cd app/spa && npx vitest run --coverage
+
+app-build:
+	docker build --platform linux/amd64 -f app/docs-api/Dockerfile -t cloudshield/app:local app
+	cd app/spa && VITE_AUTH_MODE=cognito VITE_COGNITO_USER_POOL_ID=us-east-1_Placeholder VITE_COGNITO_CLIENT_ID=placeholder npm run build && node scripts/check-bundle.mjs dist
+
+dockerlint:
+	@for f in app/docs-api/Dockerfile app/spa/Dockerfile app/local-dev/Dockerfile; do echo "== $$f"; \
+	  docker run --rm -i -v "$$PWD:/w:ro" -w /w $(HADOLINT_IMAGE) hadolint --config /w/.hadolint.yaml $$f || exit 1; done
+	checkov -d app --framework dockerfile --quiet --compact
+
+# moto alone, for the Jest integration suites.
+local-moto:
+	docker run -d --rm --name cloudshield-moto -p 127.0.0.1:5000:5000 motoserver/moto:5.2.4
+
+local-up:
+	$(COMPOSE) up -d --build --wait --wait-timeout 300
+
+local-seed:
+	$(COMPOSE) run --rm seed
+
+local-smoke:
+	cd app/local-dev && npm ci --ignore-scripts >/dev/null && npm run build >/dev/null && \
+	  AWS_ACCESS_KEY_ID=local-only AWS_SECRET_ACCESS_KEY=local-only node dist/smoke.js
+
+local-down:
+	$(COMPOSE) down -v --remove-orphans

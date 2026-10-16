@@ -49,7 +49,13 @@ infra/terraform/
     detection/     TB5           GuardDuty, CloudTrail, Config, Athena/Glue (+ waf_logs)
     */tests/                     offline `terraform test` suites (mocked AWS provider)
   environments/dev/              composes the modules — one banner per owner
-app/            S2 — Express API + React SPA
+app/            S2 — Phase E application (ADR-0006)
+  openapi.yaml                   contract-first API spec (request validator; types for both packages)
+  docs-api/                      Express 5 / TypeScript API: auth, documents, audit, decoy, SOC, GRC
+  spa/                           React SPA: customer portal, SecOps SOC dashboard, Regional GRC hub
+  grc/                           GRC rules as data (EG / EU / SA), matrix, DPA + SLA templates
+  local-dev/                     DEV ONLY: local IdP + moto seed + smoke checks
+docker-compose.local.yml         local stack: moto, local IdP, seed, docs-api, SPA (http://localhost:3000)
 soar/           S3 — safety guard + playbook code (handler contract in soar/README.md)
 detection/      S3 — Athena hunt queries
 attack-sim/     S3 — scenario A–C scripts
@@ -82,6 +88,8 @@ Code-dependent resources are written in full but **off** until their artifact ex
 | `soar_scope_app_service` | `false` | The SOAR scope tag on the docs-api ECS service and its tasks. **PB-04** exists only with this, a container image and `guardduty_runtime_monitoring = true` (paid) ([ADR-0005](docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md)). |
 | `chatops_webhook_param_name` | `""` | The ChatOps notifier, subscribed to the incidents topic. Name an SSM SecureString you created with the SOAR key ([runbook](docs/runbooks/chatops-setup.md)); the URL never enters Terraform. |
 | `allow_worker_lab_scan` | `false` | LAB ONLY: worker egress to all VPC ports, for scenario A |
+| `enable_decoy_route` | `false` | Phase E: unauthenticated `ANY /api/admin` and `/api/admin/{proxy+}` routed to the docs-api decoy (static 403 + `_platform` audit). Needs `enable_edge` and `container_image`. Without it the decoy still sees authenticated callers. |
+| `enable_decoy_publisher` | `false` | Phase E: decoy hits are published as `CloudShield:IPAddress/DecoyRouteHit` on the edge bus; SOAR records and **notifies, never blocks** (the guard refuses the type). Needs `enable_edge`, `container_image` and `soar_playbook_package` (the bus exists only with PB-05). |
 
 ---
 
@@ -144,6 +152,16 @@ Leave `bootstrap/` up: it costs cents.
 | Cognito Essentials (TOTP) | free tier for lab MAU | **on** |
 | LLM summary in the IR report | provider-billed, per run, opt-in only | off |
 
+**Phase E costs** (ADR-0006, plan §15): about **$0/month** on top of Phase D.
+
+| Item | Approximate cost | Default |
+|---|---|---|
+| New IAM policies; API Gateway decoy resources | free | decoy off |
+| EventBridge custom events (decoy publish) | $1.00 per million | with `enable_decoy_publisher` |
+| DynamoDB reads for SOC polling (6 queries per 15 s per open dashboard, cached 10 s server-side); S3 GETs for evidence checks and downloads; KMS requests | cents per month | with the service |
+| ECR `DescribeImageScanFindings` | free | with the service |
+| Local stack (moto, Apache-2.0) | $0, no LocalStack licence | local |
+
 **GuardDuty must be enabled** for the SOAR rule to receive anything. Until the `detection` module exists, run:
 
 ```bash
@@ -177,6 +195,19 @@ These always hard-fail regardless: `terraform fmt`, `terraform validate` (every 
 
 ---
 
+## Local development (Phase E)
+
+No AWS account needed: moto stands in for DynamoDB, S3, EventBridge and SSM, and a dev-only IdP replaces Cognito ([runbook](docs/runbooks/local-dev.md)).
+
+```bash
+make local-up       # builds and starts moto, local-idp, seed, docs-api, spa
+open http://localhost:3000   # pick a seeded demo user (alice, mallory, sam, ...)
+make local-smoke    # healthz, tenant isolation, decoy -> audit + bus, BROKEN chain on scenario C
+make local-down
+```
+
+docs-api runs its **production image** in `CLOUDSHIELD_ENV=local`, which its config validator accepts only next to a local emulator endpoint; the same image refuses to start in `aws` mode if any local or endpoint-override variable is set.
+
 ## Testing
 
 | What | Command | Where |
@@ -186,6 +217,10 @@ These always hard-fail regardless: `terraform fmt`, `terraform validate` (every 
 | Module unit tests (mocked AWS, no creds) | `make test` | CI `iac` job |
 | IaC policy | `checkov -d infra/terraform --framework terraform` | CI `iac` job |
 | **Gates actually trip** | `scripts/gate-selftest.sh all` | local, before enforcing |
+| App lint + typecheck + OpenAPI drift | `make app-lint` | CI `app` job |
+| App tests (Jest on moto, Vitest) | `make local-moto && make app-test` | CI `app` job |
+| Dockerfiles | `make dockerlint` (hadolint + Checkov) | CI `app` / `iac` jobs |
+| Local stack end to end | `make local-up local-smoke local-down` | CI `app-smoke` (optional) |
 
 The module tests check the safety defaults:
 
@@ -204,6 +239,7 @@ The module tests check the safety defaults:
 | sast | Express SQL built by string concatenation |
 | sca | lodash 4.17.4 (CVE-2019-10744) |
 | iac | SSH open to 0.0.0.0/0 |
+| dockerfile | `FROM node:latest` + `USER root` (hadolint DL3007, Checkov CKV_DOCKER_7/8) |
 | image | `node:14` |
 | dast | A server with no security headers |
 
@@ -269,6 +305,6 @@ An independent review agent audited commit `ea39d48` and returned **PASS WITH FI
 - [ ] **G1:** written ministry waiver for the 3-person team (risk R1, rated H×H).
 - [ ] **S1:** apply `bootstrap/` and `environments/dev`, invite collaborators, set variables and branch protection, run `scripts/gate-selftest.sh`, then set `ENFORCE_GATES=true`.
 - [x] **S1:** `edge` module: REST API Gateway + VPC Link → `module.compute.nlb_arn`, WAF ×2, CloudFront. ECR push role (OIDC, `main` only, push by digest). Phase D; verify-on-apply items in ADR-0004.
-- [ ] **S2:** `app/openapi.yaml`, then `app/docs-api/` with `Dockerfile` and `/healthz` (token contract in `app/README.md`). The `identity` module (Cognito) is built (Phase D).
+- [x] **S2:** `app/openapi.yaml`, `app/docs-api/`, `app/spa/` (portal, SOC dashboard, GRC hub) and the local compose stack. Phase E; verify-on-apply items in ADR-0006 and HANDOFF §13.
 - [ ] **S3:** `soar/safety_guard` with pytest **first**, then PB-01, then build the zip and set `soar_playbook_package` with `soar_dry_run=true`. Run scenario A, then flip dry-run off.
 - [ ] **S3:** `detection` module: GuardDuty detector, CloudTrail with S3 data events, Glue tables, an Athena workgroup with a scan cap, and Config rules.

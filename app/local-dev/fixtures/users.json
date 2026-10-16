@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1",
+  "note": "Demo identities for the local stack only. No passwords or secrets: the local IdP mints a token for any listed username.",
+  "users": [
+    { "username": "alice", "sub": "local-alice", "email": "alice@acme.example", "tenantId": "t-acme-01", "groups": ["admin"], "description": "Acme admin (EU + EG; DPA and SLA accepted)" },
+    { "username": "bob", "sub": "local-bob", "email": "bob@acme.example", "tenantId": "t-acme-01", "groups": ["member"], "description": "Acme member" },
+    { "username": "carol", "sub": "local-carol", "email": "carol@acme.example", "tenantId": "t-acme-01", "groups": ["auditor"], "description": "Acme auditor (read-only + audit trail)" },
+    { "username": "dina", "sub": "local-dina", "email": "dina@nile.example", "tenantId": "t-nile-02", "groups": ["admin"], "description": "Nile admin (EG, CBE-regulated; agreements pending)" },
+    { "username": "mallory", "sub": "local-mallory", "email": "mallory@nile.example", "tenantId": "t-nile-02", "groups": ["member"], "description": "Nile member (the IDOR demo: tries Acme's ids)" },
+    { "username": "omar", "sub": "local-omar", "email": "omar@riyadh.example", "tenantId": "t-riyadh-03", "groups": ["admin"], "description": "Riyadh admin (SA, government; no GRC profile yet)" },
+    { "username": "sam", "sub": "local-sam", "email": "sam@cloudshield.example", "tenantId": "t-cloudshield-soc", "groups": ["secops-analyst"], "description": "SecOps analyst (SOC dashboard only)" }
+  ]
+}

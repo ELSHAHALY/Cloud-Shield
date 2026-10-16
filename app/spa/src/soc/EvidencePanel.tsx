@@ -127,7 +127,7 @@ export function EvidencePanel({ api, incidentId }: { api: ApiClient; incidentId:
                       </td>
                       <td className="py-1 pr-3">{c.ok ? <Chip tone="good">✓ match</Chip> : <Chip tone="bad">✗ {c.error ?? "mismatch"}</Chip>}</td>
                       <td className="py-1 pr-3 text-xs">
-                        {c.retention ? `${c.retention.mode ?? "?"} until ${c.retention.retainUntil ?? "?"}` : "none"}
+                        {c.retention ? `${c.retention.mode ?? "?"} until ${c.retention.retainUntil ?? "?"}` : "not reported"}
                         {c.legalHold === true ? " · legal hold" : ""}
                       </td>
                     </tr>
