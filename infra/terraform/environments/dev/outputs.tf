@@ -81,6 +81,15 @@ output "cognito_issuer_url" {
   value = module.identity.issuer_url
 }
 
+output "spa_build_environment" {
+  description = "Phase E: build-time settings for the SPA (app/spa, VITE_AUTH_MODE=cognito). Public identifiers, no secrets."
+  value = {
+    VITE_COGNITO_USER_POOL_ID = module.identity.user_pool_id
+    VITE_COGNITO_CLIENT_ID    = module.identity.user_pool_client_id
+    VITE_AWS_REGION           = var.aws_region
+  }
+}
+
 # ---------------- data ----------------
 output "documents_table_name" {
   value = module.data.documents_table_name

@@ -13,6 +13,9 @@
 #                                 when container_image is set), the WAF log
 #                                 bucket and the waf_logs Athena table
 #   var.github_oidc_provider_arn -> CI ECR push role
+#   var.enable_decoy_route     -> unauthenticated /api/admin* decoy (with the API)
+#   var.enable_decoy_publisher -> the decoy publishes notify-only edge findings
+#                                 (needs enable_edge + soar_playbook_package)
 # Always on: modules/identity (Cognito; zero idle cost on Essentials).
 ###############################################################################
 
@@ -75,8 +78,20 @@ module "compute" {
   app_port                  = module.network.app_port
   nlb_listener_port         = module.network.nlb_listener_port
 
-  container_image       = var.container_image
-  container_environment = merge(module.data.app_environment, module.identity.app_environment)
+  container_image = var.container_image
+  # Phase E: data + identity + SOAR (read-only SOC, decoy bus) settings. The
+  # module filters local-mode keys and refuses them by precondition (D22);
+  # it injects APP_IMAGE and ECR_REPOSITORY_NAME itself (D18).
+  container_environment = merge(
+    module.data.app_environment,
+    module.identity.app_environment,
+    module.soar.app_environment,
+    {
+      CLOUDSHIELD_ENV  = "aws"
+      AWS_REGION       = var.aws_region
+      MAX_UPLOAD_BYTES = "5242880"
+    },
+  )
 
   enable_report_worker            = var.enable_report_worker
   soar_scope_tag                  = local.soar_scope_tag
@@ -104,6 +119,8 @@ module "edge" {
 
   name       = local.name
   enable_api = local.enable_api
+  # Phase E D14: unauthenticated /api/admin* decoy (static 403). Off by default.
+  enable_decoy_route = var.enable_decoy_route
 
   nlb_arn               = module.compute.nlb_arn
   nlb_dns_name          = module.compute.nlb_dns_name
@@ -191,6 +208,15 @@ module "soar" {
   # ChatOps notifier (plan §5.1): off unless an operator-created SecureString
   # is named (docs/runbooks/chatops-setup.md). The URL never enters state.
   chatops_webhook_param_name = var.chatops_webhook_param_name
+
+  # Phase E (D13, D16): read-only SOC access for the docs-api task role, and
+  # the decoy publisher (notify-only in the guard). Plan-time bools only;
+  # soar derives the bus publisher list from app_publishes_decoy itself.
+  # No resource cycle: soar.app_environment is built from names only (F35).
+  enable_app_integration = var.container_image != null
+  app_task_role_name     = module.compute.task_role_name
+  app_task_role_arn      = module.compute.task_role_arn
+  app_publishes_decoy    = var.enable_decoy_publisher && local.enable_api
 }
 
 module "detection" {

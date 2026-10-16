@@ -347,3 +347,53 @@ variable "chatops_allowed_hosts" {
     error_message = "chatops_allowed_hosts must be lowercase host names (no scheme, port, path or wildcard)."
   }
 }
+
+# -----------------------------------------------------------------------------
+# Phase E (plan §9, D13, D16): docs-api SOC read access and decoy publishing.
+# Plan-time bools (D6). Validations stand in for preconditions so they fire
+# whatever else is enabled.
+# -----------------------------------------------------------------------------
+variable "enable_app_integration" {
+  description = "Attach the read-only SOC policy (app-integration.tf) to the docs-api task role. Dev sets it with a container image."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "app_task_role_name" {
+  description = "modules/compute task_role_name: receives the SOC read policy. Required with enable_app_integration."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_app_integration || var.app_task_role_name != null
+    error_message = "enable_app_integration needs app_task_role_name."
+  }
+}
+
+variable "app_task_role_arn" {
+  description = "modules/compute task_role_arn: added to the edge-bus publisher list when app_publishes_decoy. Required with app_publishes_decoy."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.app_task_role_arn == null || can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$", var.app_task_role_arn))
+    error_message = "app_task_role_arn must be an IAM role ARN."
+  }
+  validation {
+    condition     = !var.app_publishes_decoy || var.app_task_role_arn != null
+    error_message = "app_publishes_decoy needs app_task_role_arn."
+  }
+}
+
+variable "app_publishes_decoy" {
+  description = "The docs-api decoy route may publish CloudShield:IPAddress/DecoyRouteHit onto the edge bus (notify-only in the guard, D13). Effective only with PB-05; needs enable_app_integration."
+  type        = bool
+  default     = false
+  nullable    = false
+
+  validation {
+    condition     = !var.app_publishes_decoy || var.enable_app_integration
+    error_message = "app_publishes_decoy needs enable_app_integration."
+  }
+}

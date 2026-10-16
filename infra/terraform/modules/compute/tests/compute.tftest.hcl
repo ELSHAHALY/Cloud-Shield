@@ -226,3 +226,107 @@ run "worker_is_hardened_and_in_scope" {
     error_message = "The worker's volume must carry the scope tag (PB-01 snapshot IAM condition)."
   }
 }
+
+# =============================================================================
+# Phase E (§9, D18, D22): injected posture env, forbidden local-mode keys.
+# =============================================================================
+run "task_definition_env_has_posture_keys_and_passes_config_through" {
+  command = apply
+
+  variables {
+    container_image = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = {
+      CLOUDSHIELD_ENV = "aws"
+      DOCUMENTS_TABLE = "cs-test-documents"
+      APP_IMAGE       = "attacker-chosen"
+    }
+  }
+
+  assert {
+    condition = {
+      for e in jsondecode(aws_ecs_task_definition.app[0].container_definitions)[0].environment : e.name => e.value
+      } == {
+      CLOUDSHIELD_ENV     = "aws"
+      DOCUMENTS_TABLE     = "cs-test-documents"
+      APP_IMAGE           = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      ECR_REPOSITORY_NAME = "cs-test/docs-api"
+    }
+    error_message = "The module injects APP_IMAGE (= container_image, overriding any input) and ECR_REPOSITORY_NAME; other keys pass through."
+  }
+  assert {
+    condition     = output.ecr_repository_name == "cs-test/docs-api"
+    error_message = "ecr_repository_name output."
+  }
+}
+
+run "filter_drops_local_mode_keys" {
+  command = apply
+
+  # No image: no task definition, so the precondition does not apply and the
+  # filter itself can be observed.
+  variables {
+    container_environment = {
+      CLOUDSHIELD_ENV     = "local"
+      AUTH_LOCAL_ISSUER   = "http://local-idp:9000"
+      AUTH_LOCAL_JWKS_URI = "http://local-idp:9000/.well-known/jwks.json"
+      AUTH_LOCAL_OTHER    = "x"
+      AWS_ENDPOINT_URL    = "http://moto:5000"
+      S3_PUBLIC_ENDPOINT  = "http://localhost:5000"
+      DOCUMENTS_TABLE     = "cs-test-documents"
+    }
+  }
+
+  assert {
+    condition     = sort(keys(local.container_environment)) == sort(["APP_IMAGE", "DOCUMENTS_TABLE", "ECR_REPOSITORY_NAME"])
+    error_message = "CLOUDSHIELD_ENV other than aws, AUTH_LOCAL_*, AWS_ENDPOINT_URL and S3_PUBLIC_ENDPOINT are filtered out (D22)."
+  }
+  assert {
+    condition     = local.forbidden_env_given == sort(["AUTH_LOCAL_ISSUER", "AUTH_LOCAL_JWKS_URI", "AUTH_LOCAL_OTHER", "AWS_ENDPOINT_URL", "CLOUDSHIELD_ENV", "S3_PUBLIC_ENDPOINT"])
+    error_message = "Every forbidden key is detected."
+  }
+}
+
+run "refuses_cloudshield_env_local" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { CLOUDSHIELD_ENV = "local" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "refuses_auth_local_issuer" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { AUTH_LOCAL_ISSUER = "http://local-idp:9000" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "refuses_auth_local_jwks_uri" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { AUTH_LOCAL_JWKS_URI = "http://local-idp:9000/.well-known/jwks.json" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "refuses_aws_endpoint_url" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { AWS_ENDPOINT_URL = "http://moto:5000" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "refuses_s3_public_endpoint" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { S3_PUBLIC_ENDPOINT = "http://localhost:5000" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}

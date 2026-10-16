@@ -193,3 +193,16 @@ variable "chatops_webhook_param_name" {
   default     = ""
   nullable    = false
 }
+
+# ---------------- Phase E (decoy) ----------------
+variable "enable_decoy_route" {
+  description = "Phase E D14: unauthenticated ANY /api/admin and /api/admin/{proxy+} routed to the app's decoy (static 403 + audit). Needs enable_edge + container_image (the API)."
+  type        = bool
+  default     = false
+}
+
+variable "enable_decoy_publisher" {
+  description = "Phase E D13/D15: the decoy publishes CloudShield:IPAddress/DecoyRouteHit onto the edge bus (the guard records + notifies, never blocks). Needs enable_edge, container_image and soar_playbook_package (the bus exists only with PB-05); otherwise decoy hits are audit-only."
+  type        = bool
+  default     = false
+}

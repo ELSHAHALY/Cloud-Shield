@@ -7,6 +7,29 @@
 # output.nlb_arn.
 ###############################################################################
 
+# Phase E D22: local-mode switches must never reach a task definition. They
+# are filtered out here AND the task definition refuses to plan if any was
+# given (defence in depth: the filter alone would hide a mis-set variable).
+locals {
+  forbidden_env_keys = ["AUTH_LOCAL_ISSUER", "AUTH_LOCAL_JWKS_URI", "AWS_ENDPOINT_URL", "S3_PUBLIC_ENDPOINT"]
+  forbidden_env_given = sort(concat(
+    [for k in keys(var.container_environment) : k if contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_")],
+    [for k, v in var.container_environment : k if(k == "CLOUDSHIELD_ENV" ? v != "aws" : false)],
+  ))
+  container_environment = merge(
+    {
+      for k, v in var.container_environment : k => v
+      if(contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_") ? false : (k == "CLOUDSHIELD_ENV" ? v == "aws" : true))
+    },
+    # Injected by the module itself (posture read, D18), so dev never feeds
+    # compute's own outputs back in as compute inputs.
+    {
+      APP_IMAGE           = coalesce(var.container_image, "none")
+      ECR_REPOSITORY_NAME = aws_ecr_repository.app.name
+    },
+  )
+}
+
 resource "aws_lb" "app" {
   #checkov:skip=CKV_AWS_91:NLB access logs exist only for TLS listeners; TLS terminates at API Gateway (TB1) and the API writes FR-4 audit events
   #checkov:skip=CKV_AWS_150:Deletion protection is a variable; off in the lab so nightly teardown works
@@ -103,7 +126,7 @@ resource "aws_ecs_task_definition" "app" {
         protocol      = "tcp"
       }]
 
-      environment = [for k, v in var.container_environment : { name = k, value = v }]
+      environment = [for k, v in local.container_environment : { name = k, value = v }]
 
       mountPoints = [{
         sourceVolume  = "tmp"
@@ -128,6 +151,13 @@ resource "aws_ecs_task_definition" "app" {
   ])
 
   tags = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = length(local.forbidden_env_given) == 0
+      error_message = "container_environment must never carry local-mode settings (CLOUDSHIELD_ENV other than aws, AUTH_LOCAL_*, AWS_ENDPOINT_URL, S3_PUBLIC_ENDPOINT): Phase E D22."
+    }
+  }
 }
 
 resource "aws_ecs_service" "app" {

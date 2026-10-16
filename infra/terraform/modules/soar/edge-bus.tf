@@ -35,8 +35,15 @@ locals {
     var.pb05_never_block_cidrs,
   )
 
-  # The harvester always publishes; Phase E adds the docs-api task role.
-  pb05_publishers = local.enable_pb05 ? concat(aws_iam_role.harvester[*].arn, var.pb05_publisher_arns) : []
+  # The harvester always publishes. Phase E: the docs-api task role is
+  # derived HERE from app_publishes_decoy (D13), so the Allow list, the Deny
+  # exception list and the role's own PutEvents grant cannot drift apart.
+  # distinct(): the same role may also be listed in pb05_publisher_arns.
+  pb05_publishers = local.enable_pb05 ? distinct(concat(
+    aws_iam_role.harvester[*].arn,
+    var.pb05_publisher_arns,
+    local.app_publishes_decoy ? [var.app_task_role_arn] : [],
+  )) : []
 
   edge_region_error = "PB-05 needs a us-east-1 provider: the CLOUDFRONT web ACL and its IP sets exist only there (F2, F17 fallback)."
 }

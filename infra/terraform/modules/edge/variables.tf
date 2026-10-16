@@ -10,6 +10,13 @@ variable "enable_api" {
   default     = false
 }
 
+variable "enable_decoy_route" {
+  description = "Phase E D14: ANY /api/admin and /api/admin/{proxy+} with authorization NONE, proxied to the app's decoy (static 403 + audit + notify-only finding). Effective only with enable_api. Off by default."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "nlb_arn" {
   description = "modules/compute nlb_arn (VPC Link target). Required with enable_api."
   type        = string
