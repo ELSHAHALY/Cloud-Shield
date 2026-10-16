@@ -226,6 +226,32 @@ override_resource {
   values = {}
 }
 
+# Phase D stage 2c (ChatOps notifier): every new managed resource, overridden.
+override_resource {
+  target = aws_iam_role.notifier
+  values = { arn = "arn:aws:iam::123456789012:role/cs-test-soar-notifier", id = "cs-test-soar-notifier" }
+}
+override_resource {
+  target = aws_iam_role_policy.notifier
+  values = {}
+}
+override_resource {
+  target = aws_cloudwatch_log_group.notifier
+  values = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/cs-test-soar-notifier" }
+}
+override_resource {
+  target = aws_lambda_function.notifier
+  values = { arn = "arn:aws:lambda:us-east-1:123456789012:function:cs-test-soar-notifier", function_name = "cs-test-soar-notifier" }
+}
+override_resource {
+  target = aws_sns_topic_subscription.notifier
+  values = {}
+}
+override_resource {
+  target = aws_lambda_permission.notifier
+  values = {}
+}
+
 variables {
   name                         = "cs-test"
   quarantine_security_group_id = "sg-0aaaaaaaaaaaaaaaa"
@@ -254,6 +280,8 @@ variables {
   nat_public_ip         = "198.51.100.10"
   pb05_publisher_arns   = ["arn:aws:iam::123456789012:role/cs-test-docs-api-task"]
   pb05_harvest_schedule = "rate(5 minutes)"
+
+  chatops_webhook_param_name = "/cs-test/soar/chatops_webhook"
 }
 
 run "pb01_nacl_permission_is_one_acl_and_add_only" {
@@ -512,5 +540,31 @@ run "guard_reads_ecs_task_and_never_block_list" {
       alltrue([for a in flatten([s.Action]) : startswith(a, "ssm:Get") || startswith(a, "ec2:Describe") || startswith(a, "iam:List") || startswith(a, "s3:GetBucketTagging") || a == "ecs:DescribeTasks"])
     ])
     error_message = "The guard stays read-only."
+  }
+}
+
+# Notifier (plan §5.1): exactly the parameter, GetItem on the table, decrypt
+# with the SOAR key, and its own logs. Nothing else, no wildcards.
+run "notifier_policy_is_exactly_its_grants" {
+  command = apply
+
+  assert {
+    condition = {
+      for s in jsondecode(data.aws_iam_policy_document.notifier[0].json).Statement :
+      join(",", sort(flatten([s.Action]))) => flatten([s.Resource])
+      } == {
+      "ssm:GetParameter"                       = ["arn:aws:ssm:us-east-1:123456789012:parameter/cs-test/soar/chatops_webhook"]
+      "dynamodb:GetItem"                       = ["arn:aws:dynamodb:us-east-1:123456789012:table/cs-test-soar-incidents"]
+      "kms:Decrypt"                            = ["arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000"]
+      "logs:CreateLogStream,logs:PutLogEvents" = ["arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/cs-test-soar-notifier:*"]
+    }
+    error_message = "The notifier role gets exactly ssm:GetParameter on its parameter, dynamodb:GetItem on the incidents table, kms:Decrypt on the SOAR key and its own logs."
+  }
+  assert {
+    condition = alltrue([
+      for s in jsondecode(data.aws_iam_policy_document.notifier[0].json).Statement :
+      s.Effect == "Allow" && try(s.Condition, null) == null
+    ])
+    error_message = "The notifier policy is four plain Allow statements."
   }
 }

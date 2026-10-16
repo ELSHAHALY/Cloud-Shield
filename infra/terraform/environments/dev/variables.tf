@@ -180,3 +180,10 @@ variable "soar_playbook_package" {
   })
   default = null
 }
+
+variable "chatops_webhook_param_name" {
+  description = "SSM SecureString holding the ChatOps webhook URL, created out of band with the SOAR key (docs/runbooks/chatops-setup.md). \"\" = no notifier. Needs soar_playbook_package."
+  type        = string
+  default     = ""
+  nullable    = false
+}

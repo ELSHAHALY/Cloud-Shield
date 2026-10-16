@@ -186,7 +186,9 @@ module "soar" {
   waf_rate_rule_name = var.enable_edge ? module.edge[0].rate_rule_name : "RateLimitPerIp"
   nat_public_ip      = module.network.nat_public_ip
 
-  # Phase D stage 2c: notifier inputs (chatops_webhook_param_name) go here.
+  # ChatOps notifier (plan §5.1): off unless an operator-created SecureString
+  # is named (docs/runbooks/chatops-setup.md). The URL never enters state.
+  chatops_webhook_param_name = var.chatops_webhook_param_name
 }
 
 module "detection" {

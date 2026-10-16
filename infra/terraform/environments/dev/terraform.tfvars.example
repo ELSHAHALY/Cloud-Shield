@@ -25,3 +25,4 @@ soar_notification_emails     = ["analyst@example.com"]
 soar_dry_run                 = true
 soar_min_severity            = 7
 soar_playbook_package        = null # { s3_bucket = "...", s3_key = "soar/playbooks-<sha>.zip" }
+chatops_webhook_param_name   = "" # e.g. "/cloudshield-dev/soar/chatops_webhook" (SecureString; see docs/runbooks/chatops-setup.md)

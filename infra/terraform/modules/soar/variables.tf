@@ -286,3 +286,30 @@ variable "pb05_harvest_schedule" {
     error_message = "pb05_harvest_schedule must be an EventBridge rate(...) or cron(...) expression."
   }
 }
+
+# -----------------------------------------------------------------------------
+# Phase D: ChatOps notifier (plan §5.1, D16). Off unless a parameter is named.
+# -----------------------------------------------------------------------------
+variable "chatops_webhook_param_name" {
+  description = "Name of an SSM SecureString (encrypted with alias/<name>-soar) holding the ChatOps webhook URL, created out of band (docs/runbooks/chatops-setup.md). \"\" = no notifier. The URL itself never enters Terraform."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  validation {
+    condition     = var.chatops_webhook_param_name == "" || (length(var.chatops_webhook_param_name) <= 1011 && can(regex("^/[A-Za-z0-9_./-]+$", var.chatops_webhook_param_name)))
+    error_message = "chatops_webhook_param_name must be \"\" or a full SSM parameter path starting with \"/\"."
+  }
+}
+
+variable "chatops_allowed_hosts" {
+  description = "Exact host names the notifier may POST to (https, port 443, no redirects). The webhook URL's host must be one of them."
+  type        = list(string)
+  default     = ["hooks.slack.com", "discord.com"]
+  nullable    = false
+
+  validation {
+    condition     = length(var.chatops_allowed_hosts) > 0 && alltrue([for h in var.chatops_allowed_hosts : can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", h))])
+    error_message = "chatops_allowed_hosts must be lowercase host names (no scheme, port, path or wildcard)."
+  }
+}

@@ -18,20 +18,21 @@ REPO = SOAR.parent
 SOAR_TF = REPO / "infra" / "terraform" / "modules" / "soar"
 PLAYBOOKS_TF = SOAR_TF / "playbooks.tf"
 EDGE_BUS_TF = SOAR_TF / "edge-bus.tf"
+NOTIFY_TF = SOAR_TF / "notify.tf"
 
 
 def tf_handlers() -> list[str]:
     return [
         handler
-        for tf in (PLAYBOOKS_TF, EDGE_BUS_TF)
+        for tf in (PLAYBOOKS_TF, EDGE_BUS_TF, NOTIFY_TF)
         for handler in re.findall(r'handler\s*=\s*"([^"]+)"', tf.read_text(encoding="utf-8"))
     ]
 
 
-def harvester_env_vars() -> set[str]:
-    text = EDGE_BUS_TF.read_text(encoding="utf-8")
+def lambda_env_block(tf: Path) -> set[str]:
+    text = tf.read_text(encoding="utf-8")
     block = re.search(r"variables = \{\n(.*?)^\s*\}\s*$", text, flags=re.MULTILINE | re.DOTALL)
-    assert block, "harvester environment block not found"
+    assert block, f"environment block not found in {tf.name}"
     return set(re.findall(r"^\s*([A-Z_]+)\s*=", block.group(1), flags=re.MULTILINE))
 
 
@@ -46,11 +47,12 @@ def tf_env_vars() -> set[str]:
 
 def test_every_terraform_handler_resolves() -> None:
     handlers = tf_handlers()
-    # safety guard, PB-01..PB-05, and the PB-05 harvester (stage 2c adds the notifier)
-    assert len(handlers) == 7
+    # safety guard, PB-01..PB-05, the PB-05 harvester and the ChatOps notifier
+    assert len(handlers) == 8
     assert "playbooks.pb04_ecs_task_contain.lambda_handler" in handlers
     assert "playbooks.pb05_waf_ip_block.lambda_handler" in handlers
     assert "playbooks.pb05_waf_ip_block.harvest_handler" in handlers
+    assert "notifier.handler.lambda_handler" in handlers
     for handler in handlers:
         module, function = handler.rsplit(".", 1)
         assert callable(getattr(importlib.import_module(module), function)), handler
@@ -93,9 +95,24 @@ def test_harvester_reads_every_variable_terraform_sets() -> None:
         "WAF_SCOPE",
         "WAF_REGION",
     }
-    assert harvester_env_vars() == read_by_code
+    assert lambda_env_block(EDGE_BUS_TF) == read_by_code
     settings = HarvestSettings.from_env(dict.fromkeys(read_by_code, "CLOUDFRONT"))
     assert settings.scope == "CLOUDFRONT"
+
+
+def test_notifier_reads_every_variable_terraform_sets() -> None:
+    from core.notifier import NotifierSettings
+
+    read_by_code = {"INCIDENTS_TABLE", "CHATOPS_WEBHOOK_PARAM", "CHATOPS_ALLOWED_HOSTS"}
+    assert lambda_env_block(NOTIFY_TF) == read_by_code
+    settings = NotifierSettings.from_env(
+        {
+            "INCIDENTS_TABLE": "t",
+            "CHATOPS_WEBHOOK_PARAM": "/p",
+            "CHATOPS_ALLOWED_HOSTS": "a.example",
+        }
+    )
+    assert settings.allowed_hosts == ("a.example",)
 
 
 def test_edge_event_source_matches_the_finding_parser() -> None:
@@ -188,9 +205,20 @@ def test_package_is_deterministic_and_minimal(tmp_path: Path) -> None:
         names = archive.namelist()
         infos = archive.infolist()
     assert names == sorted(names)
-    assert {n.split("/", 1)[0] for n in names} == {"core", "safety_guard", "playbooks"}
+    assert {n.split("/", 1)[0] for n in names} == {"core", "safety_guard", "playbooks", "notifier"}
+    # The LLM hook and the report tools are operator-side only (D17).
+    assert not [n for n in names if n.startswith("tools/") or "ai_summary" in n]
     assert not [n for n in names if "test" in n or "__pycache__" in n]
     assert {i.date_time for i in infos} == {(1980, 1, 1, 0, 0, 0)}
     for handler in tf_handlers():
         module = handler.rsplit(".", 1)[0]
         assert module.replace(".", "/") + ".py" in names
+
+
+def test_lambda_packages_never_import_the_llm_hook() -> None:
+    # D17: the LLM hook is never reachable from a Lambda.
+    for package in ("core", "safety_guard", "playbooks", "notifier"):
+        for path in (SOAR / package).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            assert "ai_summary" not in text, path
+            assert "from tools" not in text, path

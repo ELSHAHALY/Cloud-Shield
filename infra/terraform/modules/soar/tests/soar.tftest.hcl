@@ -521,3 +521,105 @@ run "rejects_bad_pb05_inputs" {
     var.pb05_harvest_schedule,
   ]
 }
+
+# =============================================================================
+# Phase D: ChatOps notifier (plan §5.1, §7)
+# =============================================================================
+run "notifier_absent_by_default" {
+  command = apply
+
+  variables {
+    playbook_package = {
+      s3_bucket = "artifacts-bucket"
+      s3_key    = "soar/playbooks.zip"
+    }
+  }
+
+  assert {
+    condition     = length(aws_lambda_function.notifier) == 0 && length(aws_sns_topic_subscription.notifier) == 0 && length(aws_lambda_permission.notifier) == 0 && length(aws_iam_role.notifier) == 0
+    error_message = "No notifier unless chatops_webhook_param_name is set."
+  }
+  assert {
+    condition     = output.notifier_function_name == null
+    error_message = "notifier_function_name must be null when the notifier is off."
+  }
+}
+
+run "notifier_needs_the_package" {
+  command = apply
+
+  variables {
+    chatops_webhook_param_name = "/cs-test/soar/chatops_webhook"
+  }
+
+  assert {
+    condition     = length(aws_lambda_function.notifier) == 0 && length(aws_sns_topic_subscription.notifier) == 0
+    error_message = "The notifier ships in the playbook zip: no package, no notifier."
+  }
+}
+
+run "notifier_enabled" {
+  command = apply
+
+  variables {
+    playbook_package = {
+      s3_bucket = "artifacts-bucket"
+      s3_key    = "soar/playbooks.zip"
+    }
+    chatops_webhook_param_name = "/cs-test/soar/chatops_webhook"
+  }
+
+  assert {
+    condition     = aws_lambda_function.notifier[0].handler == "notifier.handler.lambda_handler" && aws_lambda_function.notifier[0].function_name == "cs-test-soar-notifier"
+    error_message = "The notifier handler path must match the soar/ package."
+  }
+  assert {
+    condition = aws_lambda_function.notifier[0].environment[0].variables == tomap({
+      INCIDENTS_TABLE       = "cs-test-soar-incidents"
+      CHATOPS_WEBHOOK_PARAM = "/cs-test/soar/chatops_webhook"
+      CHATOPS_ALLOWED_HOSTS = "hooks.slack.com,discord.com"
+    })
+    error_message = "The notifier gets the parameter NAME and the allow-list, never the URL."
+  }
+  assert {
+    condition     = aws_sns_topic_subscription.notifier[0].protocol == "lambda" && aws_sns_topic_subscription.notifier[0].topic_arn == aws_sns_topic.incidents.arn && aws_sns_topic_subscription.notifier[0].endpoint == aws_lambda_function.notifier[0].arn
+    error_message = "The notifier must be subscribed to the incidents topic."
+  }
+  assert {
+    condition     = aws_lambda_permission.notifier[0].principal == "sns.amazonaws.com" && aws_lambda_permission.notifier[0].source_arn == aws_sns_topic.incidents.arn
+    error_message = "Only the incidents topic may invoke the notifier."
+  }
+  assert {
+    condition     = length(aws_lambda_function.playbook) == 4 && !contains(keys(aws_lambda_function.playbook), "soar-notifier")
+    error_message = "The notifier is not a playbook: it must not get the playbook roles or environment."
+  }
+  assert {
+    condition     = aws_cloudwatch_log_group.notifier[0].name == "/aws/lambda/cs-test-soar-notifier" && aws_cloudwatch_log_group.notifier[0].kms_key_id == aws_kms_key.this.arn
+    error_message = "The notifier logs go to its own KMS-encrypted group."
+  }
+  assert {
+    condition     = output.notifier_function_name == "cs-test-soar-notifier"
+    error_message = "notifier_function_name must be output."
+  }
+}
+
+run "rejects_bad_chatops_inputs" {
+  command = plan
+
+  variables {
+    chatops_webhook_param_name = "chatops_webhook"
+    chatops_allowed_hosts      = ["https://hooks.slack.com/services"]
+  }
+
+  expect_failures = [var.chatops_webhook_param_name, var.chatops_allowed_hosts]
+}
+
+run "rejects_empty_or_wildcard_hosts" {
+  command = plan
+
+  variables {
+    chatops_allowed_hosts = ["*.slack.com"]
+  }
+
+  expect_failures = [var.chatops_allowed_hosts]
+}

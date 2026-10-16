@@ -17,7 +17,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("core", "safety_guard", "playbooks")
+PACKAGES = ("core", "safety_guard", "playbooks", "notifier")
 _EPOCH = (1980, 1, 1, 0, 0, 0)
 
 

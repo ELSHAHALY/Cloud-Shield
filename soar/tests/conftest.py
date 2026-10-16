@@ -38,6 +38,26 @@ def _aws_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AWS_PROFILE", raising=False)
 
 
+class NetworkBlockedError(AssertionError):
+    """A test tried to open a real connection."""
+
+
+@pytest.fixture
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any real socket connection or urlopen raise (plan §5.2: tests never
+    touch the network). moto intercepts boto3 in-process, so it is unaffected."""
+    import socket
+    import urllib.request
+
+    def blocked(*_args: Any, **_kwargs: Any) -> None:
+        raise NetworkBlockedError("a test tried to use the network")
+
+    monkeypatch.setattr(socket.socket, "connect", blocked)
+    monkeypatch.setattr(socket.socket, "connect_ex", blocked)
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(urllib.request, "urlopen", blocked)
+
+
 @dataclass
 class World:
     vpc_id: str

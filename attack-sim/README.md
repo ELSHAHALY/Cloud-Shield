@@ -17,4 +17,7 @@ See [`soar/sims/README.md`](../soar/README.md) for the runner, modes and scenari
 | A — EC2 / IMDS abuse | T1552.005 / T1046 | GuardDuty UnauthorizedAccess / Recon | PB-01 |
 | B — Leaked IAM key | T1078 / T1552.001 | GuardDuty IAMUser anomaly | PB-02 |
 | C — Public S3 | T1530 | Config rule + GuardDuty S3 | PB-03 |
-| QA — Web attack | T1190 | WAF rules + rate limit | PB-05 (not built) |
+| D — ECS runtime compromise (replay-local, dry-run only) | T1610 / T1059 | GuardDuty Runtime Monitoring | PB-04 (built) |
+| E / QA — Web attack, edge IP abuse (replay-local, dry-run only) | T1190 / T1595 | WAF rules + rate limit → harvester → edge bus | PB-05 (built) |
+
+Scenarios D and E never act on a real account (ADR-0005 D20): they refuse `--target aws` and `live-aws`, and exit 3 unless the SSM dry-run switch reads `true`. Scenario E needs `--ip` (no default), and documentation-range addresses are refused by the guard by design. The ZAP baseline in CI is the live QA traffic; it never gets a WAF allow-list. Edge demos run only against our own distribution (`docs/runbooks/edge-waf-demo.md`, rule 1).

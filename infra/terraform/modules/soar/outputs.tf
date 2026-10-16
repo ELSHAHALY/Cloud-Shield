@@ -66,3 +66,8 @@ output "pb05_never_block_parameter" {
 output "pb05_harvester_function_name" {
   value = one(aws_lambda_function.harvester[*].function_name)
 }
+
+output "notifier_function_name" {
+  description = "ChatOps notifier Lambda. null unless chatops_webhook_param_name is set (and the playbook package exists)."
+  value       = one(aws_lambda_function.notifier[*].function_name)
+}
