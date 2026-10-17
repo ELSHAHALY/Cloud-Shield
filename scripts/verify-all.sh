@@ -67,7 +67,7 @@ get_var() { local v; v="$1_$(key "$2")"; printf '%s' "${!v:-}"; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/cloudshield-verify.XXXXXX")"
 LOGDIR="$WORK/logs"; mkdir -p "$LOGDIR"
-WARNINGS=""; SKIPS=0; FAILED_DOMAIN=""; FINAL_RC=0
+WARNINGS=""; SKIPS=0; FAILED_DOMAIN=""; CURRENT_DOMAIN="preflight"; FINAL_RC=0
 MOTO_CONTAINER=""; STACK_UP=0; SUMMARY_DONE=0
 START_ALL="$(date +%s)"
 
@@ -135,8 +135,10 @@ summary() {
     printf '%sRESULT: FAIL (exit 3): the working tree changed during the run%s\n' "$C_BAD" "$C_0"
   elif [ "$FINAL_RC" = 2 ]; then
     printf '%sRESULT: FAIL (exit 2): a prerequisite is missing (see preflight)%s\n' "$C_BAD" "$C_0"
+  elif [ "$FINAL_RC" = 130 ] || [ "$FINAL_RC" = 143 ]; then
+    printf '%sRESULT: INTERRUPTED (exit %s) during %s after %ss%s\n' "$C_BAD" "$FINAL_RC" "$CURRENT_DOMAIN" "$total" "$C_0"
   elif [ "$FINAL_RC" != 0 ]; then
-    printf '%sRESULT: FAIL (exit %s) in %s after %ss%s\n' "$C_BAD" "$FINAL_RC" "${FAILED_DOMAIN:-an interrupted domain}" "$total" "$C_0"
+    printf '%sRESULT: FAIL (exit %s) in %s after %ss%s\n' "$C_BAD" "$FINAL_RC" "${FAILED_DOMAIN:-$CURRENT_DOMAIN}" "$total" "$C_0"
   elif [ "$SKIPS" -gt 0 ]; then
     printf '%sRESULT: INCOMPLETE (%s skipped) after %ss: not a full verification%s\n' "$C_WARN" "$SKIPS" "$total" "$C_0"
   else
@@ -343,7 +345,10 @@ dom_local_smoke() {
   run_in "$d" "$p" "local-dev: npm ci, lint, typecheck, jest" npm ci --ignore-scripts --no-audit --no-fund || return 1
   run_in "$d" "$p" "" npm run lint || return 1
   run_in "$d" "$p" "" npm run typecheck || return 1
-  run_in "$d" "$p" "" npx jest --ci || return 1
+  # seed.test.ts needs moto (the CI app job runs it next to its moto service).
+  start_moto "$d" || return 1
+  run_in "$d" "$p" "" env MOTO_ENDPOINT=http://127.0.0.1:5000 npx jest --ci || { stop_moto; return 1; }
+  stop_moto                                       # frees 5000 for the compose moto
   STACK_UP=1
   if [ "${VERIFY_COMPOSE_NO_BUILD:-}" = 1 ]; then
     run_in "$d" . "compose up (pre-built images, VERIFY_COMPOSE_NO_BUILD=1)" docker compose -f "$COMPOSE_FILE" up -d --no-build --wait --wait-timeout 300 || return 1
@@ -398,11 +403,12 @@ printf '%sCloudShield verify-all%s  commit %s%s  %s  %s\n' "$C_B" "$C_0" \
 
 run_domain() {
   local d="$1" fn="$2" t0 rc reason
+  CURRENT_DOMAIN="$d"
   printf '\n%s▶ %s%s\n' "$C_B" "$d" "$C_0"
   reason="$(get_var SKIPREASON "$d")"
   if [ -n "$reason" ]; then
-    set_var RES "$d" SKIP; set_var FACTS "$d" "skipped: $reason"; SKIPS=$((SKIPS+1))
-    printf '%s- %s SKIPPED (%s)%s\n' "$C_WARN" "$d" "$reason" "$C_0"
+    set_var RES "$d" SKIP; set_var FACTS "$d" "skipped (missing: $reason)"; SKIPS=$((SKIPS+1))
+    printf '%s- %s SKIPPED (missing: %s)%s\n' "$C_WARN" "$d" "$reason" "$C_0"
     return 0
   fi
   t0="$(date +%s)"
