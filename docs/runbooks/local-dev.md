@@ -12,6 +12,8 @@ The stack (`docker-compose.local.yml`) runs:
 | `docs-api` | the **production** image in `CLOUDSHIELD_ENV=local` | none |
 | `spa` | local-auth SPA build on unprivileged nginx with the edge's security headers; strips `/api` like API Gateway and overwrites `CloudFront-Viewer-Address` | `127.0.0.1:3000` |
 
+> **macOS:** AirPlay Receiver listens on port 5000 on macOS 12 and later. Turn it off (System Settings → General → AirDrop & Handoff) before `make local-up` or `make verify-all`, or moto cannot bind.
+
 Every container is non-root, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`.
 
 ## Start, check, stop
@@ -19,7 +21,7 @@ Every container is non-root, read-only root filesystem, `cap_drop: ALL`, `no-new
 ```bash
 make local-up      # docker compose up -d --build --wait
 open http://localhost:3000
-make local-smoke   # five end-to-end checks (below)
+make local-smoke   # 8 end-to-end checks in five groups (below)
 make local-down    # removes the containers and moto's data
 ```
 

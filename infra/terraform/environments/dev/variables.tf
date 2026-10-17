@@ -112,6 +112,17 @@ variable "log_archive_object_lock_days" {
   default     = 0
 }
 
+variable "evidence_object_lock_days" {
+  description = "0 = off. >0 = GOVERNANCE Object Lock on the SOAR evidence bucket (chain of custody). Set it BEFORE the first apply: only settable at bucket creation. Locked versions block teardown for N days. Changing it from 0 to >0 (or back) after the first apply is expected to REPLACE the evidence bucket (object_lock_enabled forces a new resource [verify with terraform plan]); with evidence_force_destroy = true that deletes all evidence. Check that terraform plan shows no replacement of module.soar.aws_s3_bucket.evidence."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.evidence_object_lock_days >= 0 && floor(var.evidence_object_lock_days) == var.evidence_object_lock_days
+    error_message = "Must be 0 (disabled) or a whole number of days."
+  }
+}
+
 variable "soar_notification_emails" {
   description = "Analyst emails for incident notifications (each must confirm the subscription)."
   type        = list(string)

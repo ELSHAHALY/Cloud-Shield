@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import type { GrcAssessment } from "../api/types";
 import { fakeApi, meFor, renderWithSession } from "../test/render";
@@ -64,6 +64,65 @@ describe("GrcHub", () => {
     expect(await screen.findByText(/has not set a GRC profile yet/)).toBeInTheDocument();
     renderWithSession(<GrcHub />, { api: fakeApi({ "GET /grc/ruleset": ruleset, "GET /grc/profile": () => Promise.reject(new ApiError(503, "SERVICE_UNAVAILABLE", "r")) }), me: meFor("auditor") });
     expect(await screen.findByText(/unavailable right now/)).toBeInTheDocument();
+  });
+});
+
+describe("GrcHub readiness pack", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function stubDownload() {
+    const blobs: Blob[] = [];
+    const names: string[] = [];
+    const revoke = vi.fn();
+    Object.assign(URL, {
+      createObjectURL: vi.fn((b: Blob) => {
+        blobs.push(b);
+        return `blob:${blobs.length}`;
+      }),
+      revokeObjectURL: revoke,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    return { blobs, names, revoke };
+  }
+
+  it("exports Markdown and JSON from the loaded assessment without another API call", async () => {
+    const { blobs, names, revoke } = stubDownload();
+    const api = fakeApi({ "GET /grc/ruleset": ruleset, "GET /grc/profile": profile, "GET /grc/assessment": assessment });
+    renderWithSession(<GrcHub />, { api, me: meFor("auditor") });
+    fireEvent.click(await screen.findByRole("button", { name: "Download readiness pack (Markdown)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download readiness pack (JSON)" }));
+    expect(names).toEqual(["cloudshield-grc-readiness-t-acme-01-2026.10.0.md", "cloudshield-grc-readiness-t-acme-01-2026.10.0.json"]);
+    expect(blobs.map((b) => b.type)).toEqual(["text/markdown;charset=utf-8", "application/json"]);
+    expect(await blobs[0]!.text()).toContain("Not legal advice. Not an audit or certification.");
+    expect(JSON.parse(await blobs[1]!.text())).toMatchObject({ exportMeta: { tenantId: "t-acme-01" }, assessment });
+    expect(revoke).toHaveBeenCalledTimes(2);
+    expect(api.calls.map(([m, p]) => `${m} ${p}`).sort()).toEqual(["GET /grc/assessment", "GET /grc/profile", "GET /grc/ruleset"]);
+    expect(screen.getByText(/a self-assessment exported from this page/)).toBeInTheDocument();
+  });
+
+  it("shows an export failure instead of throwing", async () => {
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => {
+        throw new Error("blocked");
+      }),
+      revokeObjectURL: vi.fn(),
+    });
+    const api = fakeApi({ "GET /grc/ruleset": ruleset, "GET /grc/profile": profile, "GET /grc/assessment": assessment });
+    renderWithSession(<GrcHub />, { api, me: meFor("admin") });
+    fireEvent.click(await screen.findByRole("button", { name: "Download readiness pack (Markdown)" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+
+  it("offers no export before the assessment loads or without grc:assess", async () => {
+    const pending = new Promise(() => undefined);
+    renderWithSession(<GrcHub />, { api: fakeApi({ "GET /grc/ruleset": ruleset, "GET /grc/profile": profile, "GET /grc/assessment": () => pending }), me: meFor("auditor") });
+    expect(await screen.findByText(/Ruleset 2026.10.0/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /readiness pack/ })).toBeNull();
+    renderWithSession(<GrcHub />, { api: fakeApi({ "GET /grc/ruleset": ruleset }), me: meFor("member") });
+    expect(await screen.findByText(/assessments are visible to tenant administrators and auditors/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /readiness pack/ })).toBeNull();
   });
 });
 

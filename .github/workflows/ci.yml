@@ -178,7 +178,7 @@ jobs:
           ruff check . ../scripts/package_soar.py
           ruff format --check . ../scripts/package_soar.py
 
-      - name: pytest (coverage >= 90%)
+      - name: pytest (coverage gate in pyproject.toml, 95 %)
         run: python -m pytest --cov
 
       - name: Deterministic package builds
@@ -494,8 +494,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Local stack smoke (Phase E §11.7). Not a required check at first: builds the
-  # compose stack (moto, local IdP, seed, docs-api, SPA) and runs the five
-  # end-to-end checks of plan §14.
+  # compose stack (moto, local IdP, seed, docs-api, SPA) and runs the 8
+  # end-to-end checks (five groups) of plan §14.
   # ---------------------------------------------------------------------------
   app-smoke:
     name: "app-smoke (docker compose, optional)"

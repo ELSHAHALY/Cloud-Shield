@@ -1,6 +1,6 @@
 # CloudShield — Handoff
 
-**As of:** 17 Oct 2026 (updated after Phase E)  **Repo state:** scaffold on `main`; PRs #1 → #2 → #3 → #4 stacked and pending review (§10–§13)
+**As of:** 17 Oct 2026 (updated after Phase F)  **Repo state:** scaffold on `main`; PRs #1 → #2 → #3 → #4 → Phase F PR stacked and pending review (§10–§14). The merge and cutover steps are in [final-merge-and-cutover.md](runbooks/final-merge-and-cutover.md).
 **For:** @ELSHAHALY (S1), @YasseenAbdelghany (S2), @ahklsfg (S3), and anyone picking this up next.
 
 This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the six ADRs.
@@ -19,6 +19,7 @@ This file records everything done so far, every decision made, what is proven, w
 | `terraform validate` / `test` | **Pass locally** (TF 1.16.5, §10). The first CI run failed `terraform test`; fixed on `fix/ci-terraform-test-mocks`. |
 | App code (S2) | **Built and audited** on `feat/s2-app-soc-ui-grc` (PR #4, §13): docs-api, SPA (portal + SOC + GRC hub), local compose. Not deployed. |
 | SOAR Lambda code (S3) | **Built and audited** on `feat/s3-soar-playbooks` (§10). Still switched off: no package uploaded, dry-run on. |
+| Capstone deliverables (Phase F) | **Written** (§14): reports 01–07 in `docs/reports/`, the live demo runbook, a 20-slide deck outline, `make verify-all` and the cutover runbook. |
 | **Team-size waiver (G1)** | **Unknown. This is still the top risk (R1, H×H).** |
 
 ---
@@ -457,3 +458,137 @@ The build sandbox blocked `registry.terraform.io` and `semgrep.dev`, and interce
 3. First lab apply with `container_image` + `enable_edge`: deploy the SPA (`docs/runbooks/spa-deploy.md`), create each tenant's first admin (`tenant-provisioning.md`, tenant-id format D7, onboarding D26), work through the verify list. Decoy flags stay off until verify items 1–3 pass.
 4. Before the demo: have every `verify` legal item checked against the official text, or present it explicitly as unverified.
 5. Follow-ups recorded in ADR-0006: a WAF-corroborated decoy block, an audit-stream tamper consumer, STS session tags with `dynamodb:LeadingKeys`, a separate SOC read service, GuardDuty Malware Protection for uploads, and a decoy attack sim.
+
+---
+
+## 14. Final Capstone Completion (17 Oct): Phase F — verify-all, cutover, reports, demo, deck
+
+Branch `feat/depi-phase-f-capstone-complete`, from `feat/s2-app-soc-ui-grc` @ `9adc96d`. It becomes the Phase F PR, stacked on PR #4. Plan: [`docs/plans/depi-phase-f-capstone-complete.md`](plans/depi-phase-f-capstone-complete.md), with Planner → Builder → Independent Auditor → Validator, as in earlier phases. Almost no product code changed: no API, no Lambda and no IaC behaviour changed apart from one opt-in variable.
+
+### What was built
+
+| Deliverable | Where | Notes |
+|---|---|---|
+| One local gate run | `scripts/verify-all.sh`, `make verify-all` | Runs preflight → terraform → soar → docs-api → spa → checkov (+ hadolint) → gitleaks → actionlint → local-smoke, each mirroring its CI job, and stops at the first failure. Prints a summary per domain (colour on a TTY only, `NO_COLOR` honoured). Exit codes: 0 pass, 1 check failed, 2 prerequisite missing, 3 tree changed. `VERIFY_ALLOW_SKIP=1` skips a domain whose tool is missing and reports INCOMPLETE. `VERIFY_COMPOSE_NO_BUILD=1` uses pre-built images. Terraform runs on a scratch copy, so no lock files land in the tree. Not covered: Semgrep, Trivy, ZAP (CI is the authority). |
+| Merge and cutover runbook | `docs/runbooks/final-merge-and-cutover.md` | Merge commits only, in the order #1 → #2 → #3 → #4 → Phase F. Each PR is retargeted explicitly and then updated (`update-branch`) so CI runs fresh. `ENFORCE_GATES=true` is set after `gate-selftest.sh all` and **before** the merges. Branch protection comes **last**, with 7 required checks. Includes REST equivalents for agent sessions. |
+| Compliance Readiness Pack | `app/spa/src/grc/readinessPack.ts`, GRC hub buttons | A client-side Markdown/JSON export of the loaded assessment. It carries the banner "Not legal advice. Not an audit or certification.", the server disclaimer, provenance (ruleset version + SHA-256, profile version, generated/exported times), per-framework tables with a VERIFY marker on every unverified citation, customer actions and the residency note. All ruleset text is escaped. No API change; not audited and not signed. |
+| Object Lock pass-through | `environments/dev` `evidence_object_lock_days` (default 0) | Must be set before the first apply. Needed for demo act 5 on the AWS track. |
+| Capstone reports | `docs/reports/README.md`, `01`–`07` | One legend, one numbers policy and one MTTC definition (classes M0–M4). Every number cites a file, a CI run or this file. Items from the plan PDF, rubric or WBS that are not in the repo carry `[source: plan PDF, not in repo — team to verify]`. External sources are limited to the approved list, all marked `[verify]` (links not checked from the sandbox). |
+| Live demo runbook | `docs/runbooks/live-demo-runbook.md` | 15 minutes, 5 acts. The **offline track is primary**; the AWS lab track is used only if it was applied and rehearsed by T-24h. Dry-run is restored on every path. Includes a Q&A crib. |
+| Deck outline | `docs/presentation/deck-outline.md` | 20 slides with speaker, visual, talking points, and a "claims we never make" box. |
+| Governance and wording | CODEOWNERS, README, Makefile, ci.yml label, repo-admin-setup, edge-waf-demo, detection README, sims README, local-dev, ADR-0002 note | Every CODEOWNERS path now has owners from two roles (D11), and `/docs/` has all three. README: the MTTC claim is now a target "not yet measured on AWS", the audit is "insert-only by convention", the cost line says 5 KMS keys, and the required-checks list has 7 entries. `TARGET=local` is no longer called offline. |
+
+### Decisions (plan §2; user answers 17 Oct)
+
+- **D1–D7:** `verify-all` as specified.
+- **D8:** merge commits, with explicit retarget and update-branch.
+- **D9:** enforce the gates before merging; the fallback is documented.
+- **D10:** protection last, with **7 checks**: secrets, sast, sca, iac, soar, app, image (user Q2).
+- **D11:** second code owners (user Q1).
+- **D12:** the "Compliance Readiness Pack" (user Q3), client-side.
+- **D13:** Object Lock pass-through.
+- **D14:** honesty fixes.
+- **D15–D20:** report and demo rules.
+- **D21:** PR base `feat/s2-app-soc-ui-grc`.
+- **D22:** file names as the user gave them.
+- Q4 (viva date, lab apply) and Q5 (plan PDF items) are unanswered. The defaults are offline-first and placeholders.
+
+### Step 0 outcomes and deviations
+
+1. `cd soar && python -m pytest --cov` passes; the gate lives in `pyproject.toml` (95 %).
+2. The offline IR tool against the compose moto works: `cd soar && AWS_ENDPOINT_URL=http://127.0.0.1:5000 AWS_ACCESS_KEY_ID=local-only AWS_SECRET_ACCESS_KEY=local-only AWS_DEFAULT_REGION=us-east-1 python -m tools.generate_ir_report <id> --table cloudshield-local-soar-incidents` exits **2** for `local-c-public-bucket` (BROKEN) and **0** for `local-a-cred-exfil`. **Deviations from the plan:** boto3 needs `AWS_DEFAULT_REGION`, because `AWS_REGION` alone gives `NoRegionError`; and `make ir-report` hides the tool's exit code behind make's own 2, so the demo calls python directly.
+3. actionlint pinned to `rhysd/actionlint:1.7.12@sha256:b1934ee5…`. Docker Hub rate-limited the shellcheck image (429), so shellcheck 0.11.0 came from `pip install shellcheck-py`.
+4. The sandbox provider mirror was used via `TF_CLI_CONFIG_FILE` (outside the repo).
+5. Checkov `-d app --framework dockerfile` gives 202 passed / 0 failed with `node_modules` present, the same count as CI. No skip-path is needed.
+6. Mermaid: all 13 blocks in `docs/reports/` parse with mermaid 11.4.1 under jsdom, installed in the scratchpad. GitHub's renderer was not tested.
+7. **Found while building verify-all:** `modules/detection` reads `../../../../detection/athena-queries`, so the scratch copy must include `detection/`; the first run failed the detection tests until it did. local-dev Jest needs moto, as CI's `app` job provides, so verify-all starts one for it.
+
+### Proof
+
+**Independent audit: PASS WITH FIXES** (0 critical, 0 high, 2 medium, 7 low, 3 info). All findings were addressed in `b287a39`:
+
+- **F1 (medium):** the cutover merge loop did not stop on a failed step. A red check could still be followed by a merge, because `main` is unprotected until §4. The steps are now in `merge_pair` and `wait_ci`, which return on the first error and are bounded in time; the stack runs as one `&&` chain.
+- **F2 (medium):** changing `evidence_object_lock_days` after the first apply is expected to replace the evidence bucket, and `force_destroy = true` empties it [verify with `terraform plan`]. A warning is now in the variable description, the tfvars example, the README and the demo runbook.
+- **F3–F12:**
+  - runbook notes: the `allow_update_branch` setting, the CODEOWNERS-errors check, and checking the Phase F PR's author before approving;
+  - the verify-all actionlint glob now works from any directory;
+  - a deleted tracked file no longer fails the Terraform copy;
+  - readiness-pack statuses are escaped and GFM autolinks are defused; a hostile pack rendered through pandoc's GFM reader produced no `<a>`, `<img>`, `<code>` or `<script>`;
+  - a commit cited in chapter 07 is now marked as not in this history;
+  - chapter 01 now says protection applies after the cutover;
+  - a macOS AirPlay port-5000 hint;
+  - more version WARNs (pytest, boto3, hadolint);
+  - corrected section cross-references and smoke line ranges;
+  - a per-domain log column in the summary;
+  - teardown can no longer be aborted by a second Ctrl-C, and the scratch copy is removed after a run.
+- **The auditor also verified, independently:**
+  - fault injection on verify-all (exit codes 1/2/3/130, no orphan containers);
+  - every gh flag and jq filter used in the runbook;
+  - the 7 check names against `ci.yml`;
+  - CODEOWNERS: two or more owners from different roles on every path;
+  - 35 factual spot-checks in the reports;
+  - all 80 relative links;
+  - all 13 Mermaid blocks.
+
+**Final `make verify-all`** at `b287a39` (2026-10-17T01:46Z, Linux x86_64 sandbox): **exit 0, `RESULT: PASS after 544s`, working tree unchanged.**
+
+| Domain | Result |
+|---|---|
+| terraform | fmt clean; validate 11/11; test **110 passed** (compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42) |
+| soar | ruff clean; pytest **711 passed**; coverage 97.6 % (3160/3238 statements + branches, printed as 98 %; gate 95); package byte-identical twice (`21c481c9…`); ATT&CK export in sync |
+| docs-api | lint, typecheck and OpenAPI drift clean; Jest **290 tests / 17 suites**: 94.48 % lines, 86.78 % branches |
+| spa | lint and typecheck clean; Vitest **63 tests** (13 new for the readiness pack): 96.56 % lines; production build and bundle check pass, no `local-idp` |
+| local-dev | Jest 5 |
+| checkov | terraform **953 passed / 0 failed** (121 skipped with reasons); dockerfile **202 / 0** |
+| hadolint, actionlint | clean |
+| gitleaks | 30 commits scanned, no leaks |
+| local-smoke | **8/8** |
+
+Only one WARN: ruff 0.16.8 against the CI pin 0.17.0. Semgrep, Trivy and ZAP are not covered locally; CI is the authority for them. In the sandbox, local-smoke ran on images rebuilt from this commit with the proxy CA as a BuildKit secret (`VERIFY_COMPOSE_NO_BUILD=1`). The committed Dockerfiles are unchanged, and CI `app-smoke` builds them as committed.
+
+**Gate self-test in the sandbox** (`e240dc2`):
+
+| Gate | Result |
+|---|---|
+| secrets | ✓ tripped |
+| iac | ✓ tripped (CKV_AWS_24) |
+| dockerfile | ✓ tripped on both hadolint and Checkov. This is the first recorded result for this seed. |
+| sast | Not provable here: semgrep.dev returned 403, and the script correctly counts that as "NOT caught". |
+| sca, image, dast | Not run: no trivy binary or ZAP in the sandbox. |
+
+`scripts/gate-selftest.sh all` on S1's machine therefore stays a hard precondition for `ENFORCE_GATES=true` (cutover §1).
+
+**How verify-all differs from `ci.yml`** (audit F11; none of these is a defect):
+
+- terraform runs on a scratch copy that includes untracked, non-ignored files;
+- soar uses the installed toolchain and only warns on version drift; it builds the package twice where CI builds once;
+- docs-api and local-dev each start their own moto;
+- local-dev runs inside the local-smoke domain;
+- a hadolint binary on PATH is used if present; CI always uses the pinned image;
+- actionlint is local-only;
+- `VERIFY_COMPOSE_NO_BUILD` exists for offline rehearsals;
+- Python ≥ 3.12 is accepted with a WARN, where CI pins 3.13.
+
+**Phase F PR CI:** [PR #5](https://github.com/ELSHAHALY/Cloud-Shield/pull/5) (base `feat/s2-app-soc-ui-grc`, author @ahklsfg), run [38993019051](https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38993019051) on `a89c244`: **success**. All seven gate jobs (secrets, sast, sca, iac, soar, app, image) and `app-smoke` passed, with every `Report (fail-open)` step skipped, so the scans really passed. `gate: dast` and `terraform plan (dev)` were skipped by design. `GET /codeowners/errors` on the branch returns `[]`.
+
+### Not proven
+
+- Nothing has been applied to AWS. No M3 or M4 MTTC exists, and no GuardDuty, Step Functions, Lambda, Athena, Object Lock or WAF behaviour has been observed.
+- The cutover runbook's `gh pr …` commands were not run: the sandbox has no GraphQL, and the merge is S1's action. Its flags were checked against gh 2.89 `--help`.
+- External references and links are unverified (`[verify]` throughout).
+- The readiness pack download was tested in jsdom (Vitest), not in a browser under the nginx CSP.
+
+### Next
+
+1. **S1:** run [final-merge-and-cutover.md](runbooks/final-merge-and-cutover.md): approvals, `gate-selftest.sh all`, `ENFORCE_GATES=true`, the merges in order, branch deletion, then protection with 7 checks.
+2. **First lab apply** (with `evidence_object_lock_days` set first, if act 5 needs it). Then fill the `PENDING (first lab apply)` tables in chapter 07, using the commands written next to each table.
+3. **Team:** supply R7, FR-1/6/7, plan §1.1, the rubric criteria and the WBS Chapter 7 structure from the PDF, replacing every `[source: plan PDF, not in repo — team to verify]` row. Check every `[verify]` reference and legal item.
+4. **G1 (team-size waiver):** still open and still the top risk.
+5. **Doc and code follow-ups found by the writers:**
+   - `soar/sims` documents a `cleanup` command that `runner.py` does not implement;
+   - no code creates the honeytoken key the sims README describes;
+   - the A/B/C replay tests check the exit code but not the status string;
+   - A-recon has no dedicated replay-local test;
+   - the data module's audit PutItem statement still has the sid `AuditAppendOnly` (the wording only; the behaviour is insert-only by convention);
+   - query 04's header still names `RateLimitPerIp` as the harvester feed (now `SoarApiRateLimit`);
+   - the `gate-selftest.sh dockerfile` seed has no recorded result.

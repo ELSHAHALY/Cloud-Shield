@@ -64,7 +64,7 @@ Then, within about ten minutes:
 
 ## 5. Hunt it (query 04)
 
-In Athena, workgroup `cs-forensics`, database `<name>_forensics`:
+In Athena, use the workgroup from `terraform output -raw athena_workgroup` (`<name>-cs-forensics`) and the database from `terraform output -raw glue_database`:
 
 ```sql
 PREPARE h04 FROM <contents of detection/athena-queries/04_waf_blocked_requests_by_client.sql>;

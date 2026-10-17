@@ -27,7 +27,9 @@ If any gate fails the runner exits `3` and does nothing. This target check (`sim
 Exit code `0` = passed, `1` = ran but did not meet the bar, `3` = a safety gate refused.
 
 ```bash
-# offline smoke test (what CI runs)
+# TARGET=local (the default) is NOT offline: it drives the real handlers with your
+# configured AWS credentials. CI runs this path under moto via pytest instead:
+#   cd soar && python -m pytest tests/test_sims.py -s
 make sim SCENARIO=c ACCOUNT=123456789012 NAME=cloudshield-dev \
      SIM_ARGS="--bucket-name cloudshield-dev-lab-exposure-123456789012"
 

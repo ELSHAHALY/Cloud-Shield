@@ -5,7 +5,7 @@
 A multi-tenant document API on AWS has two defensive loops around it:
 
 - **Shift-left:** a GitHub Actions pipeline with six security gates.
-- **Shift-right:** GuardDuty → EventBridge → Step Functions `cs-ir-router` → Lambda playbooks. These contain an incident automatically, typically in under 60 s, and capture forensic evidence afterwards. Eradication stays human-gated.
+- **Shift-right:** GuardDuty → EventBridge → Step Functions `cs-ir-router` → Lambda playbooks. These are designed to contain an incident automatically within a 60 s target (MTTC, defined in [ADR-0002 §3](docs/adr/0002-module-map-and-scaffold-strategy.md); **not yet measured on AWS**, because nothing has been applied yet) and capture forensic evidence afterwards. Containment is automated; eradication stays human-gated.
 
 > **New here? Start with [docs/HANDOFF.md](docs/HANDOFF.md).**
 >
@@ -38,7 +38,7 @@ infra/terraform/
                                  flow logs, NLB/app/worker/QUARANTINE security groups
     compute/       TB4 + TB2     ECR (immutable, scan-on-push), ECS cluster, roles
                                  [flag] internal NLB + Fargate service · [flag] EC2 report-worker
-    data/          TB3           DynamoDB documents + append-only audit (PITR), documents bucket, KMS
+    data/          TB3           DynamoDB documents + insert-only-by-convention audit (conditional writes, stream, PITR), documents bucket, KMS
     log-archive/   TB5           KMS-encrypted log archive (flow-log delivery wired)
     soar/          TB5           SNS, incidents table, evidence bucket, dry-run switch, GuardDuty rule
                                  [flag] guard + PB-01..05 Lambdas + Step Functions cs-ir-router,
@@ -84,6 +84,7 @@ Code-dependent resources are written in full but **off** until their artifact ex
 | `enable_report_worker` | `false` | EC2 forensic target carrying the SOAR scope tag |
 | `soar_playbook_package` | `null` | Safety guard + PB-01/02/03 Lambdas and the `cs-ir-router` state machine. Until then GuardDuty findings go **straight to SNS email**. PB-04, PB-05 and the notifier also need it. |
 | `soar_dry_run` | `true` | `false` = playbooks really act |
+| `evidence_object_lock_days` | `0` | Phase F: GOVERNANCE Object Lock on the SOAR evidence bucket for N days. **Set before the first apply** (only settable at bucket creation); locked versions block teardown for N days. Changing it after the first apply is expected to **replace the evidence bucket and delete its contents** (`evidence_force_destroy = true`) [verify with `terraform plan`]: check the plan shows no replacement of `module.soar.aws_s3_bucket.evidence`. |
 | `enable_edge` | `false` | CloudFront, the CloudFront and regional WAFs (≈ US$20/month), the SPA bucket and WAF logging; the REST API too when `container_image` is set; and **PB-05** (edge bus, harvester + sighting table, never-block list, auto-expiry sweeper) when the package is set. **Requires `aws_region = us-east-1`** ([ADR-0004](docs/adr/0004-edge-identity-waf.md)). |
 | `soar_scope_app_service` | `false` | The SOAR scope tag on the docs-api ECS service and its tasks. **PB-04** exists only with this, a container image and `guardduty_runtime_monitoring = true` (paid) ([ADR-0005](docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md)). |
 | `chatops_webhook_param_name` | `""` | The ChatOps notifier, subscribed to the incidents topic. Name an SSM SecureString you created with the SOAR key ([runbook](docs/runbooks/chatops-setup.md)); the URL never enters Terraform. |
@@ -132,7 +133,7 @@ terraform apply tfplan
 
 With every flag at its default, this creates the network, log archive, ECR repository, empty ECS cluster, data tables and bucket, and the SOAR baseline. **No** service, EC2 instance, Lambda or state machine is created.
 
-Steady-state cost is about **US$33/month for the NAT gateway plus about US$4/month for 4 KMS keys**, with small log and S3 charges on top. Destroy the environment when you're not working:
+Steady-state cost is about **US$33/month for the NAT gateway plus about US$5/month for the 5 KMS keys created by default** (compute, data, log archive, SOAR, Athena results; edge adds one more when enabled, and bootstrap has its own state key), with small log and S3 charges on top. Destroy the environment when you're not working:
 
 ```bash
 terraform destroy
@@ -184,14 +185,15 @@ aws guardduty create-detector --enable
 
 3. **Settings → Branches → add a rule for `main`:**
    - Require a PR with **2 approvals** and **Code Owner review**. CODEOWNERS lines with several owners need only *one* of them; the second approval is what makes review two-person.
-   - Require these status checks: `gate: secrets (gitleaks)`, `gate: sast (semgrep)`, `gate: sca (trivy fs)`, `gate: iac (terraform + checkov)`, `gate: image (trivy image + sbom)`.
+   - Require these 7 status checks: `gate: secrets (gitleaks)`, `gate: sast (semgrep)`, `gate: sca (trivy fs)`, `gate: iac (terraform + checkov)`, `gate: soar (ruff + pytest)`, `gate: app (lint + typecheck + test + build)`, `gate: image (trivy image + sbom)`.
+   - Apply protection only **after** the PR stack is merged: the order and the exact commands are in [final-merge-and-cutover.md](docs/runbooks/final-merge-and-cutover.md).
    - Block force pushes and deletions. Include administrators.
 
 ### Fail-open → enforced
 
 Gates start **fail-open**: findings show as warnings and in the job summary but don't block a merge. Set `ENFORCE_GATES=true` **no later than the end of Sprint 1**; from then on, any finding fails the job (FR-5).
 
-These always hard-fail regardless: `terraform fmt`, `terraform validate` (every root **and** module) and `terraform test`.
+These always hard-fail regardless: `terraform fmt`, `terraform validate` (every root **and** module), `terraform test`, `gate: soar` and `gate: app`.
 
 ---
 
@@ -212,6 +214,7 @@ docs-api runs its **production image** in `CLOUDSHIELD_ENV=local`, which its con
 
 | What | Command | Where |
 |---|---|---|
+| **Everything local, in sequence** | `make verify-all` (or `scripts/verify-all.sh soar spa` for a subset). Needs terraform, Python + `soar/requirements-dev.txt`, Node 24, Docker + Compose ≥ 2.20, checkov, gitleaks, a full clone and free ports 3000/5000. Exit 0 pass, 1 check failed, 2 prerequisite missing, 3 tree changed. `VERIFY_ALLOW_SKIP=1` skips a domain whose tool is missing (RESULT: INCOMPLETE); `NO_COLOR=1` for plain output. Semgrep, Trivy and ZAP are left to CI. | local, before you push |
 | Format | `make fmt` / `terraform fmt -check -recursive infra/terraform` | CI `iac` job |
 | Validate every root + module | `make validate` | CI `iac` job |
 | Module unit tests (mocked AWS, no creds) | `make test` | CI `iac` job |
