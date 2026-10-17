@@ -79,6 +79,8 @@ otherwise both roles stop being assumable. The trust policies stay in the curren
 
 ## 3. Branch protection on `main`
 
+> **Timing (Phase F):** apply this only after PRs #1–#4 and the Phase F PR are merged, as the last step of [final-merge-and-cutover.md](final-merge-and-cutover.md) §4. Earlier, the stacked PRs cannot satisfy it (#1–#3 have no `gate: app` job).
+
 The required checks are the CI **job names** exactly as they appear in `.github/workflows/ci.yml`. DAST is left out because it is skipped on pull requests, and a required check that never runs blocks every merge.
 
 ```bash
@@ -91,6 +93,7 @@ cat > /tmp/protection.json <<'JSON'
       { "context": "gate: sast (semgrep)" },
       { "context": "gate: sca (trivy fs)" },
       { "context": "gate: iac (terraform + checkov)" },
+      { "context": "gate: soar (ruff + pytest)" },
       { "context": "gate: app (lint + typecheck + test + build)" },
       { "context": "gate: image (trivy image + sbom)" }
     ]
@@ -115,4 +118,4 @@ Notes:
 
 - With 3 people and 2 required approvals, every PR needs **both** other team members to approve. That is the intended two-person review (handoff §2.5, M7).
 - `enforce_admins: true` means @ELSHAHALY can no longer push straight to `main` either. Set it to `false` only if the team agrees.
-- When a new CI job becomes a gate (for example the SOAR unit-test job), add its name to `checks` and re-run the `PUT`.
+- When a new CI job becomes a gate, add its name to `checks` and re-run the `PUT`. (`gate: soar` was added in Phase F.)

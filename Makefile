@@ -7,9 +7,10 @@ TF_TEST_DIRS := $(patsubst %/tests,%,$(wildcard infra/terraform/modules/*/tests)
 PYTHON ?= python3
 
 .PHONY: help scan secrets sast sca iac fmt validate test gate-selftest soar-lint soar-test package-soar sim ir-report expired-blocks \
-        app-lint app-test app-build dockerlint local-up local-down local-seed local-smoke local-moto
+        app-lint app-test app-build dockerlint local-up local-down local-seed local-smoke local-moto verify-all
 
 help:
+	@echo "make verify-all     - every local gate in sequence, stop on first failure (VERIFY_DOMAINS=...)"
 	@echo "make scan           - every local gate (secrets, sast, sca, iac, soar)"
 	@echo "make fmt            - terraform fmt -recursive"
 	@echo "make validate       - terraform validate every root and module (no backend)"
@@ -30,6 +31,12 @@ help:
 	@echo "make local-down     - stop the local stack and drop its data"
 
 scan: secrets sast sca iac soar-lint soar-test app-lint app-test dockerlint
+
+# Phase F D1: terraform, soar, docs-api, spa, checkov, gitleaks, actionlint and
+# local-smoke in that order, on a scratch copy where needed; never edits the tree.
+VERIFY_DOMAINS ?=
+verify-all:
+	scripts/verify-all.sh $(VERIFY_DOMAINS)
 
 secrets:
 	gitleaks git . --redact --verbose
@@ -75,7 +82,9 @@ test:
 gate-selftest:
 	scripts/gate-selftest.sh all
 
-# Attack simulation (plan §7). Offline default; AWS targets need credentials.
+# Attack simulation (plan §7). NOT offline: TARGET=local drives the real handlers
+# with your configured AWS credentials (default boto3 chain). CI runs this path
+# under moto via pytest (soar/tests/test_sims.py). TARGET=aws needs a lab apply.
 # e.g. make sim SCENARIO=c ACCOUNT=123456789012 NAME=cloudshield-dev SIM_ARGS="--bucket-name cloudshield-dev-lab-exposure-123456789012"
 # D/E (D20): replay --target local only, and only while the SSM dry-run switch reads true:
 #   make sim SCENARIO=e ACCOUNT=123456789012 SIM_ARGS="--ip <client-ip>"

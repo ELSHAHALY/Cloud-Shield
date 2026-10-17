@@ -6,6 +6,7 @@ import { ApiError } from "../api/client";
 import type { GrcAssessment, GrcFinding, GrcProfile, GrcProfileRecord, RulesetSummary } from "../api/types";
 import { useSession } from "../auth/session";
 import { Card, Chip, Disclaimer, ErrorBox, Loading, VerifyBadge } from "../components/ui";
+import { buildReadinessPackJson, buildReadinessPackMarkdown, downloadText, packFilename } from "./readinessPack";
 
 const STATUS_TONE: Record<GrcFinding["status"], "good" | "warn" | "bad" | "info" | "neutral"> = {
   MET: "good",
@@ -107,7 +108,7 @@ function ProfileForm({ initial, onSaved }: { initial: GrcProfile; onSaved(r: Grc
 }
 
 export function GrcHub() {
-  const { api, can } = useSession();
+  const { api, can, me } = useSession();
   const [ruleset, setRuleset] = useState<RulesetSummary | null>(null);
   const [profile, setProfile] = useState<GrcProfileRecord | null | undefined>(undefined);
   const [assessment, setAssessment] = useState<GrcAssessment | null>(null);
@@ -133,6 +134,19 @@ export function GrcHub() {
   }, [api, loadAssessment]);
 
   const frameworks = assessment ? [...new Set(assessment.findings.map((f) => f.framework))] : [];
+
+  function exportPack(format: "md" | "json") {
+    if (!assessment || !ruleset) return;
+    setError(null);
+    try {
+      const exportedAt = new Date().toISOString();
+      const text = format === "md" ? buildReadinessPackMarkdown(assessment, ruleset, me.tenantId, exportedAt) : buildReadinessPackJson(assessment, ruleset, me.tenantId, exportedAt);
+      downloadText(text, format === "md" ? "text/markdown;charset=utf-8" : "application/json", packFilename(me.tenantId, assessment.rulesetVersion, format));
+    } catch (e) {
+      setError(e);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline justify-between">
@@ -164,7 +178,21 @@ export function GrcHub() {
       {can("grc:assess") && profile !== null && !assessment && !error && <Loading />}
       {assessment && (
         <>
-          <Card title="Summary">
+          <Card
+            title="Summary"
+            actions={
+              ruleset && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => exportPack("md")} className="rounded bg-indigo-700 px-3 py-1 text-sm text-white">
+                    Download readiness pack (Markdown)
+                  </button>
+                  <button type="button" onClick={() => exportPack("json")} className="rounded border border-slate-300 px-3 py-1 text-sm">
+                    Download readiness pack (JSON)
+                  </button>
+                </div>
+              )
+            }
+          >
             <ul className="flex flex-wrap gap-2">
               {(Object.keys(assessment.summary) as (keyof GrcAssessment["summary"])[]).map((k) => (
                 <li key={k}>
@@ -174,6 +202,7 @@ export function GrcHub() {
                 </li>
               ))}
             </ul>
+            <p className="mt-2 text-xs text-slate-600">Compliance Readiness Pack: a self-assessment exported from this page. Not legal advice. Not an audit or certification.</p>
             <p className="mt-2 text-xs text-slate-600">
               Deployed in {assessment.platformFacts.deploymentRegions?.toString()} · incident automation {String(assessment.platformFacts.incidentAutomation)} · generated {assessment.generatedAt}
             </p>

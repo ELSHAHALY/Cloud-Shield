@@ -19,7 +19,7 @@ Every container is non-root, read-only root filesystem, `cap_drop: ALL`, `no-new
 ```bash
 make local-up      # docker compose up -d --build --wait
 open http://localhost:3000
-make local-smoke   # five end-to-end checks (below)
+make local-smoke   # 8 end-to-end checks in five groups (below)
 make local-down    # removes the containers and moto's data
 ```
 

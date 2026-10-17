@@ -179,6 +179,7 @@ module "soar" {
   min_severity                 = var.soar_min_severity
   soar_scope_tag               = local.soar_scope_tag
   playbook_package             = var.soar_playbook_package
+  evidence_object_lock_days    = var.evidence_object_lock_days
 
   # Known at plan time (a bool), so the IAM document shape never depends on
   # an unknown ARN.

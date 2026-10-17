@@ -112,6 +112,17 @@ variable "log_archive_object_lock_days" {
   default     = 0
 }
 
+variable "evidence_object_lock_days" {
+  description = "0 = off. >0 = GOVERNANCE Object Lock on the SOAR evidence bucket (chain of custody). Set it BEFORE the first apply: only settable at bucket creation. Locked versions block teardown for N days."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.evidence_object_lock_days >= 0 && floor(var.evidence_object_lock_days) == var.evidence_object_lock_days
+    error_message = "Must be 0 (disabled) or a whole number of days."
+  }
+}
+
 variable "soar_notification_emails" {
   description = "Analyst emails for incident notifications (each must confirm the subscription)."
   type        = list(string)

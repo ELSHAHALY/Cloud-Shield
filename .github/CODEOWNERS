@@ -12,31 +12,35 @@
 # ONE of them, not all. Lines below with two or three owners mean "any of these
 # domains may approve". Real two-person review is enforced by branch protection
 # ("Required approvals: 2"), not by this file.
+#
+# Phase F (D11): every path has at least two owners from different roles. A
+# PR author's own approval never counts, so a path with its author as the
+# ONLY code owner could never pass "Require review from Code Owners".
 
-# Default: anything unmapped needs the platform owner.
-*                                           @ELSHAHALY
+# Default: anything unmapped needs the platform owner (or SecOps as second).
+*                                           @ELSHAHALY @ahklsfg
 
 # ---------------- S1 — Platform / Infra / CI-CD ----------------
-/infra/                                     @ELSHAHALY
-/infra/terraform/bootstrap/                 @ELSHAHALY
-/infra/terraform/modules/network/           @ELSHAHALY
-/infra/terraform/modules/compute/           @ELSHAHALY
-/infra/terraform/modules/edge/              @ELSHAHALY
-/Makefile                                   @ELSHAHALY
-/.pre-commit-config.yaml                    @ELSHAHALY
+/infra/                                     @ELSHAHALY @ahklsfg
+/infra/terraform/bootstrap/                 @ELSHAHALY @ahklsfg
+/infra/terraform/modules/network/           @ELSHAHALY @ahklsfg
+/infra/terraform/modules/compute/           @ELSHAHALY @ahklsfg
+/infra/terraform/modules/edge/              @ELSHAHALY @ahklsfg
+/Makefile                                   @ELSHAHALY @ahklsfg
+/.pre-commit-config.yaml                    @ELSHAHALY @ahklsfg
 /.zap/                                      @ELSHAHALY @YasseenAbdelghany
 
 # ---------------- S2 — App / Identity / Data ----------------
-/app/                                       @YasseenAbdelghany
-/infra/terraform/modules/data/              @YasseenAbdelghany
-/infra/terraform/modules/identity/          @YasseenAbdelghany
+/app/                                       @YasseenAbdelghany @ELSHAHALY
+/infra/terraform/modules/data/              @YasseenAbdelghany @ELSHAHALY
+/infra/terraform/modules/identity/          @YasseenAbdelghany @ELSHAHALY
 
 # ---------------- S3 — SecOps / SOAR / Forensics ----------------
-/soar/                                      @ahklsfg
-/detection/                                 @ahklsfg
-/attack-sim/                                @ahklsfg
-/infra/terraform/modules/soar/              @ahklsfg
-/infra/terraform/modules/log-archive/       @ahklsfg
+/soar/                                      @ahklsfg @ELSHAHALY
+/detection/                                 @ahklsfg @ELSHAHALY
+/attack-sim/                                @ahklsfg @ELSHAHALY
+/infra/terraform/modules/soar/              @ahklsfg @ELSHAHALY
+/infra/terraform/modules/log-archive/       @ahklsfg @ELSHAHALY
 
 # ---------------- Shared, security-critical: either domain may approve ----------------
 # The environment composition touches every domain.
@@ -56,6 +60,7 @@
 /.github/                                   @ELSHAHALY @ahklsfg
 # Ownership rules themselves: any of the three (pair with required approvals = 2).
 /.github/CODEOWNERS                         @ELSHAHALY @YasseenAbdelghany @ahklsfg
+/docs/                                      @ELSHAHALY @YasseenAbdelghany @ahklsfg
 /docs/adr/                                  @ELSHAHALY @YasseenAbdelghany @ahklsfg
 
 # ---------------- Phase E: app security-critical paths ----------------

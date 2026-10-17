@@ -4,7 +4,7 @@ The detection layer behind the SOAR engine: what sees the attack, and what the a
 
 | Path | What goes here |
 |---|---|
-| `athena-queries/` | The catalogued hunt queries (FR-8). One `.sql` per query; the header gives the ATT&CK technique, scenario, tables and parameters. Terraform turns each into an `aws_athena_named_query` in the `cs-forensics` workgroup, so the repo file and the saved query are the same text. |
+| `athena-queries/` | The catalogued hunt queries (FR-8). One `.sql` per query; the header gives the ATT&CK technique, scenario, tables and parameters. Terraform turns each into an `aws_athena_named_query` in the `<name>-cs-forensics` workgroup, so the repo file and the saved query are the same text. |
 
 ## What the module creates (ADR-0002 module map)
 
@@ -15,7 +15,7 @@ The detection layer behind the SOAR engine: what sees the attack, and what the a
 | CloudTrail | **on** | Management events + S3 **data events for exactly the evidence and documents buckets** (and the lab bucket when enabled). This is the compensating control for the missing S3 server access logs (handoff gap 16). Delivered to the log archive (`cloudtrail/`), with log-file validation. |
 | AWS Config | **on** | Recorder scoped to `AWS::S3::Bucket` (cost), plus `S3_BUCKET_PUBLIC_READ_PROHIBITED` and `S3_BUCKET_PUBLIC_WRITE_PROHIBITED`. NON_COMPLIANT results notify the analyst via the SOAR SNS topic. |
 | Security Hub (+ CIS v3.0.0, PCI DSS v3.2.1) | off | Per-check cost; its controls need Config to record more than S3. Toggle per flag. |
-| Athena `cs-forensics` workgroup | **on** | Settings **enforced**: a 1 GiB per-query scan cap and KMS-encrypted results. Glue catalog (`<name>_forensics`) with partition projection for `cloudtrail`, `vpc_flow_logs` and `guardduty_findings` — no crawlers, no `MSCK REPAIR`. |
+| Athena `<name>-cs-forensics` workgroup (`terraform output -raw athena_workgroup`) | **on** | Settings **enforced**: a 1 GiB per-query scan cap and KMS-encrypted results. Glue catalog (`<name>_forensics`) with partition projection for `cloudtrail`, `vpc_flow_logs` and `guardduty_findings` — no crawlers, no `MSCK REPAIR`. |
 | Glue table `waf_logs` (Phase D) | with `enable_edge` | Both web ACLs' logs in the `aws-waf-logs-<name>-<acct>` bucket (`modules/log-archive`, archive key; `authorization`, `cookie` and `x-origin-verify` redacted). Columns follow AWS's WAF DDL; partition projection on `waf_region` (`cloudfront`, `<region>`), `webacl` (the two ACL names) and `log_time` (`yyyy/MM/dd/HH/mm`, 1-minute interval). |
 
 ## Scenario C: containment vs. notification
@@ -38,7 +38,7 @@ terraform import 'module.detection.aws_config_configuration_recorder.this[0]' <n
 
 ## Hunt queries
 
-Parameterised with Athena `?` placeholders — run them with `PREPARE` / `EXECUTE ... USING`, in the `cs-forensics` workgroup and the `<name>_forensics` database. Each filters on a partition column, so a run stays far under the 1 GiB cap.
+Parameterised with Athena `?` placeholders — run them with `PREPARE` / `EXECUTE ... USING`, in the `<name>-cs-forensics` workgroup and the `<name>_forensics` database. Each filters on a partition column, so a run stays far under the 1 GiB cap.
 
 | File | ATT&CK | Scenario | Answers |
 |---|---|---|---|
