@@ -1,0 +1,556 @@
+{
+  "schemaVersion": "1",
+  "description": "Finding types and the triage() result of soar/core/attack.py; asserted by pytest (test_export_attack_table.py) and Jest (docs-api soc tests).",
+  "cases": [
+    {
+      "findingType": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS",
+      "expected": {
+        "scenario": "A",
+        "attack_techniques": [
+          "T1552.005"
+        ],
+        "tactic": "Credential Access",
+        "impact": "Instance-role credentials were used from outside AWS: the attacker held the report-worker's permissions until the sessions were revoked.",
+        "eradication": [
+          "Confirm the revoke-older-sessions deny is on the instance role (PB-01).",
+          "Find the IMDS access path (SSRF or a shell) on the instance from the EBS snapshot.",
+          "Enforce IMDSv2 with hop limit 1 on the launch template.",
+          "Review CloudTrail for every call made with the stolen session."
+        ],
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy.",
+          "Keep the snapshot and manifest until the case is closed."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ]
+      }
+    },
+    {
+      "findingType": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.InsideAWS",
+      "expected": {
+        "scenario": "A",
+        "attack_techniques": [
+          "T1552.005"
+        ],
+        "tactic": "Credential Access",
+        "impact": "Instance-role credentials were used from outside AWS: the attacker held the report-worker's permissions until the sessions were revoked.",
+        "eradication": [
+          "Confirm the revoke-older-sessions deny is on the instance role (PB-01).",
+          "Find the IMDS access path (SSRF or a shell) on the instance from the EBS snapshot.",
+          "Enforce IMDSv2 with hop limit 1 on the launch template.",
+          "Review CloudTrail for every call made with the stolen session."
+        ],
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy.",
+          "Keep the snapshot and manifest until the case is closed."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ]
+      }
+    },
+    {
+      "findingType": "Recon:EC2/Portscan",
+      "expected": {
+        "scenario": "A-recon",
+        "attack_techniques": [
+          "T1046"
+        ],
+        "tactic": "Discovery",
+        "impact": "An instance scanned other hosts: likely an early foothold looking for lateral targets.",
+        "eradication": [
+          "Identify the scanning process from the EBS snapshot (PB-01 evidence).",
+          "Check the scanned targets' logs for follow-up connections."
+        ],
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ]
+      }
+    },
+    {
+      "findingType": "Recon:IAMUser/MaliciousIPCaller",
+      "expected": {
+        "scenario": "A-recon",
+        "attack_techniques": [
+          "T1046"
+        ],
+        "tactic": "Discovery",
+        "impact": "An instance scanned other hosts: likely an early foothold looking for lateral targets.",
+        "eradication": [
+          "Identify the scanning process from the EBS snapshot (PB-01 evidence).",
+          "Check the scanned targets' logs for follow-up connections."
+        ],
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ]
+      }
+    },
+    {
+      "findingType": "UnauthorizedAccess:IAMUser/MaliciousIPCaller.Custom",
+      "expected": {
+        "scenario": "B",
+        "attack_techniques": [
+          "T1078",
+          "T1552.001"
+        ],
+        "tactic": "Initial Access / Credential Access",
+        "impact": "A long-term IAM access key was used by an untrusted caller.",
+        "eradication": [
+          "Confirm the key is Inactive and the session-revocation deny is on the user (PB-02).",
+          "Find where the key leaked (repository, CI log, workstation) and purge it.",
+          "Review CloudTrail for every call made with the key."
+        ],
+        "recovery": [
+          "Delete the deactivated key once the investigation no longer needs it.",
+          "Issue a replacement credential only if the user still needs one (prefer a role)."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "UnauthorizedAccess:IAMUser/ConsoleLoginSuccess.B",
+      "expected": {
+        "scenario": "B",
+        "attack_techniques": [
+          "T1078",
+          "T1552.001"
+        ],
+        "tactic": "Initial Access / Credential Access",
+        "impact": "A long-term IAM access key was used by an untrusted caller.",
+        "eradication": [
+          "Confirm the key is Inactive and the session-revocation deny is on the user (PB-02).",
+          "Find where the key leaked (repository, CI log, workstation) and purge it.",
+          "Review CloudTrail for every call made with the key."
+        ],
+        "recovery": [
+          "Delete the deactivated key once the investigation no longer needs it.",
+          "Issue a replacement credential only if the user still needs one (prefer a role)."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Policy:S3/BucketBlockPublicAccessDisabled",
+      "expected": {
+        "scenario": "C",
+        "attack_techniques": [
+          "T1530"
+        ],
+        "tactic": "Collection",
+        "impact": "A project bucket's public-access protection was disabled: its objects may have been readable.",
+        "eradication": [
+          "Confirm all four Block Public Access flags are on (PB-03 read-back).",
+          "Review S3 data events for anonymous GetObject during the exposure window.",
+          "Codify the block in Terraform (the report adds a ready-to-apply block when PB-03 recorded a valid bucket name) so drift is visible."
+        ],
+        "recovery": [
+          "Remove or rewrite the bucket policy statements that granted public access.",
+          "Rotate any secret that was stored in the exposed objects."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Policy:S3/BucketAnonymousAccessGranted",
+      "expected": {
+        "scenario": "C",
+        "attack_techniques": [
+          "T1530"
+        ],
+        "tactic": "Collection",
+        "impact": "A project bucket's public-access protection was disabled: its objects may have been readable.",
+        "eradication": [
+          "Confirm all four Block Public Access flags are on (PB-03 read-back).",
+          "Review S3 data events for anonymous GetObject during the exposure window.",
+          "Codify the block in Terraform (the report adds a ready-to-apply block when PB-03 recorded a valid bucket name) so drift is visible."
+        ],
+        "recovery": [
+          "Remove or rewrite the bucket policy statements that granted public access.",
+          "Rotate any secret that was stored in the exposed objects."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Policy:IAMUser/RootCredentialUsage",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Execution:Runtime/NewBinaryExecuted",
+      "expected": {
+        "scenario": "D",
+        "attack_techniques": [
+          "T1610",
+          "T1059"
+        ],
+        "tactic": "Execution",
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "CryptoCurrency:Runtime/BitcoinTool.B",
+      "expected": {
+        "scenario": "D",
+        "attack_techniques": [
+          "T1610",
+          "T1059",
+          "T1496"
+        ],
+        "tactic": "Execution",
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "Execution:Runtime/CryptoCurrencyMinerExecuted",
+      "expected": {
+        "scenario": "D",
+        "attack_techniques": [
+          "T1610",
+          "T1059",
+          "T1496"
+        ],
+        "tactic": "Execution",
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "PrivilegeEscalation:Runtime/ContainerMountsHostDirectory",
+      "expected": {
+        "scenario": "D",
+        "attack_techniques": [
+          "T1610",
+          "T1059"
+        ],
+        "tactic": "Execution",
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "CloudShield:IPAddress/WafRateLimitExceeded",
+      "expected": {
+        "scenario": "E",
+        "attack_techniques": [
+          "T1190",
+          "T1595",
+          "T1499"
+        ],
+        "tactic": "Initial Access / Reconnaissance / Impact",
+        "impact": "A client exceeded the edge rate limit or hit a decoy route: probing or abuse of the public app.",
+        "eradication": [
+          "Review WAF logs (query 04) for the client's URIs and terminating rules.",
+          "Check the application audit trail for requests from the address that succeeded."
+        ],
+        "recovery": [
+          "The PB-05 sweeper lifts the block automatically once blockExpiresAt has passed (D15); tools/list_expired_blocks.py cross-checks expired, lost and orphan entries.",
+          "Lift it early by hand if the address is shared (NAT, carrier gateway) or a false positive (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.2",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "CloudShield:IPAddress/DecoyRouteHit",
+      "expected": {
+        "scenario": "E",
+        "attack_techniques": [
+          "T1190",
+          "T1595",
+          "T1499"
+        ],
+        "tactic": "Initial Access / Reconnaissance / Impact",
+        "impact": "A client exceeded the edge rate limit or hit a decoy route: probing or abuse of the public app.",
+        "eradication": [
+          "Review WAF logs (query 04) for the client's URIs and terminating rules.",
+          "Check the application audit trail for requests from the address that succeeded."
+        ],
+        "recovery": [
+          "The PB-05 sweeper lifts the block automatically once blockExpiresAt has passed (D15); tools/list_expired_blocks.py cross-checks expired, lost and orphan entries.",
+          "Lift it early by hand if the address is shared (NAT, carrier gateway) or a false positive (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.2",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "CloudShield:IPAddress/SomethingNew",
+      "expected": {
+        "scenario": "E",
+        "attack_techniques": [
+          "T1190",
+          "T1595",
+          "T1499"
+        ],
+        "tactic": "Initial Access / Reconnaissance / Impact",
+        "impact": "A client exceeded the edge rate limit or hit a decoy route: probing or abuse of the public app.",
+        "eradication": [
+          "Review WAF logs (query 04) for the client's URIs and terminating rules.",
+          "Check the application audit trail for requests from the address that succeeded."
+        ],
+        "recovery": [
+          "The PB-05 sweeper lifts the block automatically once blockExpiresAt has passed (D15); tools/list_expired_blocks.py cross-checks expired, lost and orphan entries.",
+          "Lift it early by hand if the address is shared (NAT, carrier gateway) or a false positive (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.2",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "cloudshield:ipaddress/wafratelimitexceeded",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Exfiltration:S3/AnomalousBehavior",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Impact:S3/PermissionsModification.Unusual",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Trojan:EC2/DNSDataExfiltration",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "UnauthorizedAccess:EC2/SSHBruteForce",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "Recon",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": ":Runtime/",
+      "expected": {
+        "scenario": "D",
+        "attack_techniques": [
+          "T1610",
+          "T1059"
+        ],
+        "tactic": "Execution",
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ]
+      }
+    },
+    {
+      "findingType": "",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    },
+    {
+      "findingType": null,
+      "expected": {
+        "scenario": "default",
+        "attack_techniques": [],
+        "tactic": "Unclassified",
+        "impact": "No automated triage for this finding type: analyst review required.",
+        "eradication": [
+          "Review the finding in GuardDuty and decide whether it is a true positive."
+        ],
+        "recovery": [
+          "Record the outcome on the incident before closing it."
+        ],
+        "references": []
+      }
+    }
+  ]
+}

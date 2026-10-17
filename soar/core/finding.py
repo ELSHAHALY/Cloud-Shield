@@ -30,6 +30,13 @@ ECS_RESOURCE_TYPE = "ECSCluster"
 EDGE_TYPE_PREFIX = "CloudShield:IPAddress/"
 EDGE_RATE_FINDING_TYPE = "CloudShield:IPAddress/WafRateLimitExceeded"
 EDGE_FINDING_TYPES = frozenset({EDGE_RATE_FINDING_TYPE})
+# Phase E (D13): edge types that are recorded and notified but NEVER blocked.
+# docs-api's decoy route publishes DecoyRouteHit; nothing independent of the
+# caller corroborates it yet, so it must not be in EDGE_FINDING_TYPES. The
+# guard refuses it with an explicit analyst-review reason; PB-05 refuses it
+# because it is not allow-listed (audit A1).
+EDGE_DECOY_FINDING_TYPE = "CloudShield:IPAddress/DecoyRouteHit"
+EDGE_NOTIFY_ONLY_TYPES = frozenset({EDGE_DECOY_FINDING_TYPE})
 
 _INSTANCE_ID = re.compile(r"^i-(?:[0-9a-f]{8}|[0-9a-f]{17})$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Z0-9]{16,128}$")

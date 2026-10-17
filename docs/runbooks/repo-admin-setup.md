@@ -39,6 +39,7 @@ Set these later, not now:
 | `ENFORCE_GATES=true` | Only after `scripts/gate-selftest.sh all` shows ✓ for every gate. Until then the gates are fail-open. |
 | `STAGING_URL` | Once the app is deployed. Turns on the ZAP gate. |
 | `APP_DIR` | Only if the app is not at `app/docs-api`. |
+| `IMAGE_CONTEXT` | Only if the docs-api build context is not `app` (Phase E D2: the contract and `app/grc` must be inside the context). |
 | `AWS_ECR_PUSH_ROLE_ARN` | After `environments/dev` is applied with `github_oidc_provider_arn` set (bootstrap output). Turns on the "Push scanned image (main only)" step of the image gate. |
 | `ECR_REPOSITORY` | Same time as `AWS_ECR_PUSH_ROLE_ARN`: the full repository URL the push step tags and pushes to. |
 
@@ -53,7 +54,7 @@ gh variable set AWS_ECR_PUSH_ROLE_ARN --repo "$REPO" --body "$(terraform output 
 gh variable set ECR_REPOSITORY        --repo "$REPO" --body "$(terraform output -raw ecr_repository_url)"
 ```
 
-CI only pushes, on `main`, an image that passed **every** gate: the push step requires this job's Trivy image scan **and** the secrets, SAST and SCA scans to have really succeeded (each gate job exports its scan step's outcome, so a fail-open finding still blocks the push). It never deploys. Deploying stays a local apply with `container_image` set to the digest shown in the job summary.
+CI only pushes, on `main`, an image that passed **every** gate: the push step requires this job's Trivy image scan **and** the secrets, SAST and SCA scans to have really succeeded, **and** (Phase E) the `app` gate (lint, typecheck, tests, build) (each gate job exports its scan step's outcome, so a fail-open finding still blocks the push). It never deploys. Deploying stays a local apply with `container_image` set to the digest shown in the job summary.
 
 ### 2b. Optional (S1): bind the OIDC subject to the workflow file
 
@@ -90,6 +91,7 @@ cat > /tmp/protection.json <<'JSON'
       { "context": "gate: sast (semgrep)" },
       { "context": "gate: sca (trivy fs)" },
       { "context": "gate: iac (terraform + checkov)" },
+      { "context": "gate: app (lint + typecheck + test + build)" },
       { "context": "gate: image (trivy image + sbom)" }
     ]
   },

@@ -1,0 +1,5 @@
+# hadolint (plan §11): warnings fail; only these registries may be used.
+failure-threshold: warning
+trustedRegistries:
+  - docker.io
+  - gcr.io

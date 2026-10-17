@@ -476,6 +476,34 @@ def test_type_and_source_are_rechecked(world: Any, ip_sets: dict[str, dict[str, 
     assert waf.calls == []
 
 
+# Phase E (D13): the docs-api decoy type is notify-only. Even if the router
+# were handed a forged allowed=True decision (anyone who can start
+# cs-ir-router can write one), PB-05 refuses it before any WAF call, because
+# the type is not in EDGE_FINDING_TYPES (audit A1 is not weakened).
+@pytest.mark.parametrize("address", ["1.1.1.1", "2606:4700:4700::1111"])
+def test_decoy_hit_with_a_forged_allow_is_refused(
+    world: Any, ip_sets: dict[str, dict[str, str]], address: str
+) -> None:
+    waf = Waf(managed=(address,))  # WAF would even corroborate it
+    decoy = events.edge_ip(address, finding_id="edge-decoy-1-1-1-1-2026101410")
+    decoy["detail"]["type"] = "CloudShield:IPAddress/DecoyRouteHit"
+    decoy["detail"]["service"]["additionalInfo"]["publisher"] = "docs-api-decoy"
+    seed(world, decoy)
+    with pytest.raises(PlaybookError, match=r"type .* is not allowed"):
+        pb05_for(world, ip_sets, waf).handle(
+            events.payload("block", decoy, allowed=True, dry_run=False)
+        )
+    # Dry-run returns only the "would" plan (PB-05 is unchanged in Phase E):
+    # still no WAF call of any kind and no mutation.
+    result = pb05_for(world, ip_sets, waf).handle(
+        events.payload("block", decoy, allowed=True, dry_run=True)
+    )
+    assert result["contained"] is False
+    assert waf.calls == []
+    assert addresses(ip_sets["v4"]) == []
+    assert addresses(ip_sets["v6"]) == []
+
+
 # ---------------------------------------------------------------- dry run
 @pytest.mark.parametrize("decision_dry_run", [True, "false", None])
 def test_dry_run_makes_zero_aws_mutations(

@@ -1,9 +1,9 @@
 # CloudShield — Handoff
 
-**As of:** 16 Oct 2026 (updated after Phase D)  **Repo state:** scaffold on `main`; PRs #1 → #2 → #3 stacked and pending review (§10–§12)
+**As of:** 17 Oct 2026 (updated after Phase E)  **Repo state:** scaffold on `main`; PRs #1 → #2 → #3 → #4 stacked and pending review (§10–§13)
 **For:** @ELSHAHALY (S1), @YasseenAbdelghany (S2), @ahklsfg (S3), and anyone picking this up next.
 
-This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the five ADRs.
+This file records everything done so far, every decision made, what is proven, what is not, and exactly what to do next. Read this first, then `README.md`, then the six ADRs.
 
 ---
 
@@ -17,7 +17,7 @@ This file records everything done so far, every decision made, what is proven, w
 | Pushed to GitHub | **Yes** (14 Oct, `1019669`). History restarts there: the zip carried no `.git`. |
 | Deployed to AWS | **No.** Nothing has been applied. |
 | `terraform validate` / `test` | **Pass locally** (TF 1.16.5, §10). The first CI run failed `terraform test`; fixed on `fix/ci-terraform-test-mocks`. |
-| App code (S2) | Not started (Phase E). Cognito `identity` module and the token contract (`app/README.md`) are built (§12). |
+| App code (S2) | **Built and audited** on `feat/s2-app-soc-ui-grc` (PR #4, §13): docs-api, SPA (portal + SOC + GRC hub), local compose. Not deployed. |
 | SOAR Lambda code (S3) | **Built and audited** on `feat/s3-soar-playbooks` (§10). Still switched off: no package uploaded, dry-run on. |
 | **Team-size waiver (G1)** | **Unknown. This is still the top risk (R1, H×H).** |
 
@@ -410,3 +410,50 @@ Branch `feat/s1-s2-edge-identity-waf` (stacked on #2). Plan: `docs/plans/s1-s2-e
 2. S1: apply `bootstrap` (new output `github_oidc_provider_arn`), set `AWS_ECR_PUSH_ROLE_ARN` / `ECR_REPOSITORY`; optionally customise the OIDC subject (runbook).
 3. Lab apply with `enable_edge = true` only when needed (cost); run `docs/runbooks/edge-waf-demo.md` against our own distribution; work through the verify-on-apply list.
 4. Phase E: Node `docs-api` (decoy route publishes a **corroborated** edge type to the PB-05 bus), React SOC dashboard (`secops-analyst`), `docker-compose`.
+
+## 13. Update 17 Oct: Phase E — docs-api, SPA (portal + SOC), Regional GRC hub, local stack
+
+Branch `feat/s2-app-soc-ui-grc` → **PR #4** (stacked on #3; merge #1 → #2 → #3 → #4). Plan: `docs/plans/s2-app-soc-ui-grc.md`. Design record: **ADR-0006** (decisions D1–D28, build-time deviations, audit amendments, residual risks, follow-ups); ADR-0005 and ADR-0002 §5 amended. Pipeline: Planner → Builder (3 stages) → Independent Auditor → Validator.
+
+### What was built
+
+| Area | Owner | Summary |
+|---|---|---|
+| Terraform deltas | S1 / S2 / S3 | Data policy narrowed to `tenants/*` (+ `GetObjectVersion`, `DeleteObjectVersion`). Compute: ECR posture read on the app repo only; task-definition env injects `APP_IMAGE`, filters and refuses every local-mode key (`AUTH_LOCAL_*`, `AWS_ENDPOINT_URL[_*]`, `S3_PUBLIC_ENDPOINT`, `CLOUDSHIELD_ENV≠aws`). `soar/app-integration.tf`: read-only SOC policy (GetItem; Query on the GSI only; evidence reads under `incidents/*`; `kms:Decrypt` via DynamoDB/S3/SSM; dry-run parameter) and a `PutEvents` grant pinned to source + detail-type; the bus publisher list is derived. Edge: `enable_decoy_route` (off). Dev: `enable_decoy_route` / `enable_decoy_publisher` (off), `spa_build_environment` output. |
+| SOAR | S3 | `EDGE_NOTIFY_ONLY_TYPES = {DecoyRouteHit}`: the guard records + notifies, never allows; PB-05 still refuses it. `tools/export_attack_table.py` feeds docs-api triage (CI `--check`). Golden chain-of-custody fixtures shared by pytest and Jest. |
+| `app/openapi.yaml` | S2 | OpenAPI 3.1 contract: the request validator, the test-time response validator, and generated types for both packages (CI drift check). |
+| `app/docs-api` | S2 | Express 5 / TS on distroless Node 24 (Debian 13), 1000:1000, read-only rootfs. Cognito ID-token re-verification; tenant from the token only; RBAC + ABAC; documents (upload through the API with SHA-256 + magic bytes + SSE-KMS; version-pinned pre-signed downloads; tombstone delete; every change + its audit event in one transaction); insert-only audit; click-through DPA/SLA acceptance gating writes; **notify-only decoy**; **SOC read model** (one GSI query per status, allow-listed projection, MTTC + CoC parity with the Python IR tool, posture); GRC rules engine. |
+| `app/spa` | S2 | React 19 + Vite + Tailwind. Portal (documents, audit, onboarding), **SecOps SOC dashboard** (posture banner, MTTC gauge, ATT&CK bars, incidents, SOAR timeline, evidence + IR report download), **Regional GRC hub** (EG / EU / SA) and shared-responsibility matrix. Amplify v6 SRP + TOTP with `sessionStorage`; no inline script/style; the local sign-in is compiled out of production builds. |
+| `app/grc` | S2 / S3 | Ruleset `2026.10.0` (32 rules: EG-PDPL, EG-CBE, EU-GDPR, SA-PDPL, SA-NCA), matrix (AWS built; Azure/GCP mapped), platform facts, DPA/SLA **templates**. **Not legal advice**; every non-GDPR citation is `verify`. Residency/transfer rules report GAP for EG/SA/EU tenants by construction (us-east-1). |
+| Local stack | S2 / S1 | `docker-compose.local.yml`: moto 5.2.4, dev-only local IdP, idempotent seed (refuses non-local endpoints), the production docs-api image in local mode, the SPA on nginx at `http://localhost:3000`. `make local-up local-smoke local-down` ([runbook](runbooks/local-dev.md)). |
+| CI | S1 | New hard-failing **`gate: app (lint + typecheck + test + build)`** (moto service, Jest + Vitest coverage gates, OpenAPI drift, cognito build without `local-idp`, hadolint, compose config). Image built with context `app/` and the real gate outcomes as build args; push also needs `app`. Semgrep `p/typescript` + `p/react`; Checkov `--framework dockerfile`; optional `app-smoke`. Dependabot npm ×3, docker ×3, docker-compose. |
+
+### Audit: PASS WITH FIXES (0 critical, 0 high, 2 medium, 8 low, 2 info)
+
+All fixed in commit `b1d4543`, each with a regression test (table in ADR-0006 "Audit amendments"). The two medium ones:
+
+- **E1**: a title cut mid-surrogate made every download of that document a 500, after an audit event had already been written.
+- **E2**: the orphan-upload cleanup needed `s3:DeleteObjectVersion`, so orphans would never have been erased.
+
+The lows tighten the pre-auth limiter (E3), DynamoDB error mapping (E4), honest ECR (E5) and evidence (E6) wording, decoy audit flooding via IPv6 rotation (E7), the Terraform env filter (E8), input echo in errors (E9) and cursor validation (E10). The audit found tenant isolation, authz, the local-auth coupling and the notify-only decoy path sound.
+
+### Proven
+
+- **Linux CI on PR #4 (`471a0e4`): every job green**, including `gate: app` and `app-smoke`. The scan steps really passed (not fail-open): Semgrep 95 rules, 0 findings (first run of `p/typescript` / `p/react`); Trivy image 0 fixable CRITICAL/HIGH; SBOM uploaded; Dependabot config accepted (`docker-compose` ecosystem valid).
+- Locally after the audit fixes (Linux, CI-pinned versions): docs-api Jest **290 tests / 17 suites** on moto (94.5 % lines, 86.8 % branches; gates 90 / 85); SPA Vitest **50** (96.3 % lines); local-dev Jest 5; `make local-smoke` **8/8**; SPA renders with no console/CSP errors (headless Chromium); `terraform test` **110/110** (compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42); `validate` 11/11; `fmt` clean; Checkov 953 terraform + 202 dockerfile passed, 0 failed; Trivy fs and image clean; Gitleaks clean; hadolint + actionlint clean; ruff clean, pytest 97.6 %.
+
+**Not proven:** nothing applied to AWS. moto does not enforce IAM, KMS key ids, bucket policies or Object Lock retention reads. The verify-on-first-apply list is plan §16 / ADR-0006 (viewer address through HTTP_PROXY incl. IPv6; NONE decoy routes vs `{proxy+}`; conditioned `PutEvents` vs the bus Deny; GSI Query with `kms:Decrypt` via DynamoDB; Object Lock error codes; pre-signed SSE-KMS + `VersionId` downloads; cross-table transactions; distroless 1000:1000; Amplify SRP + TOTP under the CloudFront CSP; ZAP; `/soc/posture` gates).
+
+**Open [verify] legal items** (UI shows a badge on each): Egypt PDPL article content and Executive Regulations status; all CBE instruments; KSA PDPL amendments, dates, transfer and breach rules; NCA ECC-2:2024 / CCC / NDMO; AWS EU–US DPF participation; Egypt E-Signature Law No. 15 of 2004.
+
+### Environment notes (build sandbox)
+
+The build sandbox blocked `registry.terraform.io` and `semgrep.dev`, and intercepts TLS. Terraform ran from a local provider mirror (aws 6.69.1, random 3.9.1 from releases.hashicorp.com); images were built from scratch copies of the Dockerfiles that only add the proxy CA as a BuildKit secret (the committed Dockerfiles are unchanged). CI is the authority for both.
+
+### Next
+
+1. Review/merge **#1 → #2 → #3 → #4**. CODEOWNERS now asks S2 + S1 on auth/config/Dockerfile/compose, and S2 + S3 on soc/, decoy/, grc/ and `app-integration.tf`.
+2. Repo admin: add the required check **`gate: app (lint + typecheck + test + build)`** (runbook `repo-admin-setup.md`); set `ENFORCE_GATES=true` once `scripts/gate-selftest.sh all` is green (now including the dockerfile seeds). Install the Claude GitHub App on the repo if PR events should reach agent sessions.
+3. First lab apply with `container_image` + `enable_edge`: deploy the SPA (`docs/runbooks/spa-deploy.md`), create each tenant's first admin (`tenant-provisioning.md`, tenant-id format D7, onboarding D26), work through the verify list. Decoy flags stay off until verify items 1–3 pass.
+4. Before the demo: have every `verify` legal item checked against the official text, or present it explicitly as unverified.
+5. Follow-ups recorded in ADR-0006: a WAF-corroborated decoy block, an audit-stream tamper consumer, STS session tags with `dynamodb:LeadingKeys`, a separate SOC read service, GuardDuty Malware Protection for uploads, and a decoy attack sim.

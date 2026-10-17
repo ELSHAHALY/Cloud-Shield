@@ -3,6 +3,10 @@
 #
 #   GET /api/healthz      no auth          -> http://<nlb>/healthz
 #   ANY /api/{proxy+}     Cognito ID token -> http://<nlb>/{proxy}
+#   ANY /api/admin        no auth, ONLY with enable_decoy_route (Phase E D14)
+#   ANY /api/admin/{proxy+}                -> http://<nlb>/admin[/{proxy}]
+#                         The app's decoy answers a static 403 problem and
+#                         records the hit; it never serves data.
 #
 # The authorizer checks signature, issuer and expiry of the ID token; the app
 # re-verifies iss, aud and token_use=id and takes the tenant ONLY from the
@@ -11,6 +15,7 @@
 
 locals {
   api_count        = var.enable_api ? 1 : 0
+  decoy_count      = var.enable_api && var.enable_decoy_route ? 1 : 0
   api_stage        = "v1"
   backend_base_url = var.nlb_dns_name == null ? null : "http://${var.nlb_dns_name}:${var.nlb_listener_port}"
   # API Gateway overwrites the origin secret with an empty static value, so
@@ -128,13 +133,87 @@ resource "aws_api_gateway_integration" "proxy" {
   })
 }
 
+# --- ANY /api/admin and /api/admin/{proxy+} (decoy, Phase E D14) -------------
+# Unauthenticated by design so the decoy also sees scanners without a token.
+# API Gateway prefers the more specific resource, so these beat {proxy+}
+# [inferred: verify-on-apply §16 #2]. Every other route still requires the
+# Cognito authorizer.
+resource "aws_api_gateway_resource" "admin" {
+  count       = local.decoy_count
+  rest_api_id = aws_api_gateway_rest_api.this[0].id
+  parent_id   = aws_api_gateway_resource.api[0].id
+  path_part   = "admin"
+}
+
+resource "aws_api_gateway_resource" "admin_proxy" {
+  count       = local.decoy_count
+  rest_api_id = aws_api_gateway_rest_api.this[0].id
+  parent_id   = aws_api_gateway_resource.admin[0].id
+  path_part   = "{proxy+}"
+}
+
+resource "aws_api_gateway_method" "admin" {
+  #checkov:skip=CKV_AWS_59:decoy route: unauthenticated by design, returns a static 403; every other route requires Cognito
+  #checkov:skip=CKV2_AWS_53:decoy route: unauthenticated by design, returns a static 403; every other route requires Cognito
+  count         = local.decoy_count
+  rest_api_id   = aws_api_gateway_rest_api.this[0].id
+  resource_id   = aws_api_gateway_resource.admin[0].id
+  http_method   = "ANY"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "admin" {
+  count                   = local.decoy_count
+  rest_api_id             = aws_api_gateway_rest_api.this[0].id
+  resource_id             = aws_api_gateway_resource.admin[0].id
+  http_method             = aws_api_gateway_method.admin[0].http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "ANY"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.this[0].id
+  uri                     = "${local.backend_base_url}/admin"
+  request_parameters      = local.blank_origin_verify
+}
+
+resource "aws_api_gateway_method" "admin_proxy" {
+  #checkov:skip=CKV_AWS_59:decoy route: unauthenticated by design, returns a static 403; every other route requires Cognito
+  #checkov:skip=CKV2_AWS_53:decoy route: unauthenticated by design, returns a static 403; every other route requires Cognito
+  count         = local.decoy_count
+  rest_api_id   = aws_api_gateway_rest_api.this[0].id
+  resource_id   = aws_api_gateway_resource.admin_proxy[0].id
+  http_method   = "ANY"
+  authorization = "NONE"
+
+  request_parameters = {
+    "method.request.path.proxy" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "admin_proxy" {
+  count                   = local.decoy_count
+  rest_api_id             = aws_api_gateway_rest_api.this[0].id
+  resource_id             = aws_api_gateway_resource.admin_proxy[0].id
+  http_method             = aws_api_gateway_method.admin_proxy[0].http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "ANY"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.this[0].id
+  uri                     = "${local.backend_base_url}/admin/{proxy}"
+
+  request_parameters = merge(local.blank_origin_verify, {
+    "integration.request.path.proxy" = "method.request.path.proxy"
+  })
+}
+
 # --- deployment + stage ----------------------------------------------------------
 resource "aws_api_gateway_deployment" "this" {
   count       = local.api_count
   rest_api_id = aws_api_gateway_rest_api.this[0].id
 
   triggers = {
-    redeployment = sha1(jsonencode([
+    # The decoy entries are appended only when the route exists, so turning
+    # it on (or off) redeploys, and the hash is unchanged while it stays off.
+    redeployment = sha1(jsonencode(concat([
       aws_api_gateway_resource.api[0].id,
       aws_api_gateway_resource.healthz[0].id,
       aws_api_gateway_resource.proxy[0].id,
@@ -149,7 +228,20 @@ resource "aws_api_gateway_deployment" "this" {
       aws_api_gateway_integration.proxy[0].id,
       aws_api_gateway_integration.proxy[0].uri,
       aws_api_gateway_integration.proxy[0].request_parameters,
-    ]))
+      ], local.decoy_count == 1 ? [jsonencode([
+        aws_api_gateway_resource.admin[0].id,
+        aws_api_gateway_resource.admin_proxy[0].id,
+        aws_api_gateway_method.admin[0].id,
+        aws_api_gateway_method.admin[0].authorization,
+        aws_api_gateway_method.admin_proxy[0].id,
+        aws_api_gateway_method.admin_proxy[0].authorization,
+        aws_api_gateway_integration.admin[0].id,
+        aws_api_gateway_integration.admin[0].uri,
+        aws_api_gateway_integration.admin[0].request_parameters,
+        aws_api_gateway_integration.admin_proxy[0].id,
+        aws_api_gateway_integration.admin_proxy[0].uri,
+        aws_api_gateway_integration.admin_proxy[0].request_parameters,
+    ])] : [])))
   }
 
   lifecycle {

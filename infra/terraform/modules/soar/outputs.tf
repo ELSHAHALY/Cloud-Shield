@@ -81,3 +81,18 @@ output "pb05_harvest_state_table_name" {
   description = "Per-address sighting counters (>= 2 consecutive harvests before a publish). null without enable_pb05."
   value       = one(aws_dynamodb_table.harvest_state[*].name)
 }
+
+output "app_environment" {
+  description = "Non-secret SOC settings for the docs-api container (merged into modules/compute container_environment). Built from names and locals only (F35)."
+  value = {
+    INCIDENTS_TABLE        = local.app_incidents_table_name
+    INCIDENTS_STATUS_INDEX = local.app_incidents_index_name
+    EVIDENCE_BUCKET        = local.app_evidence_bucket_name
+    SOAR_DRY_RUN_PARAM     = local.app_dry_run_param_name
+    SOAR_PLAYBOOKS_ENABLED = tostring(local.enable_playbooks)
+    EDGE_EVENT_SOURCE      = local.edge_event_source
+    EDGE_BUS_NAME          = local.app_publishes_decoy ? local.edge_bus_name : ""
+    DECOY_PUBLISH_ENABLED  = tostring(local.app_publishes_decoy)
+    AWS_ACCOUNT_ID         = local.account_id
+  }
+}

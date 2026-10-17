@@ -1,0 +1,39 @@
+CLOUDSHIELD SERVICE LEVEL AGREEMENT (TEMPLATE, VERSION 2026-10)
+
+STATUS: Template prepared for an academic capstone. It has not been reviewed
+by legal counsel and is not legal advice. The platform runs in a lab account;
+no commercial service is offered.
+
+1. Service
+1.1 The CloudShield document API and portal, served through Amazon
+    CloudFront and Amazon API Gateway in AWS us-east-1.
+
+2. Availability objective
+2.1 Objective: 99.5% monthly availability of the API, measured as successful
+    responses to the health endpoint, excluding scheduled maintenance
+    announced 48 hours ahead.
+2.2 This is an objective, not a guarantee. No service credits apply.
+
+3. Security incident handling
+3.1 Automated containment playbooks target a mean time to contain of 60
+    seconds for the incident types they cover. Incidents outside their scope
+    are routed to an analyst.
+3.2 The Controller is told of an incident affecting its data without undue
+    delay (see the Data Processing Agreement, clause 8).
+
+4. Support
+4.1 Best effort during the capstone's working hours. Severity is assessed by
+    the platform team.
+
+5. Data durability and recovery
+5.1 Document metadata has point-in-time recovery (35 days). Stored objects
+    are versioned; previous versions are kept for 30 days.
+
+6. Exclusions
+6.1 Outages caused by AWS, by the Controller's own configuration, or by
+    traffic that the web application firewall blocks.
+
+7. Acceptance
+7.1 Recorded as a click-through by an MFA-authenticated tenant administrator.
+    This is evidence of acceptance, not a qualified or advanced electronic
+    signature.

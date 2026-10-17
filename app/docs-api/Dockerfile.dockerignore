@@ -1,0 +1,16 @@
+# Allow-list for the docs-api image (context: app/). Everything else, the SPA,
+# local-dev tooling, tests and node_modules, stays out of the context.
+*
+!docs-api/package.json
+!docs-api/package-lock.json
+!docs-api/.npmrc
+!docs-api/tsconfig.json
+!docs-api/tsconfig.build.json
+!docs-api/src/**
+!docs-api/scripts/write-build-info.mjs
+!openapi.yaml
+!grc/schema/**
+!grc/rules/**
+!grc/matrix/**
+!grc/agreements/**
+!grc/platform-facts.json

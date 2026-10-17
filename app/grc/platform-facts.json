@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "reviewedAgainst": "Terraform defaults on feat/s2-app-soc-ui-grc (modules/identity mfa_configuration=ON, modules/data CMK + PITR + 30-day noncurrent expiry, modules/soar evidence_object_lock_days=0, the API exists only with enable_edge, which always attaches both WAFs)",
+  "lastReviewed": "2026-10-16",
+  "facts": {
+    "provider": "aws",
+    "encryptionAtRest": "kms-cmk",
+    "mfa": "totp-required",
+    "auditTrail": "insert-only-by-convention",
+    "mttcTargetSeconds": 60,
+    "erasureCompletesWithinDays": 30,
+    "transitInternalHop": "http-over-privatelink",
+    "evidenceObjectLock": "off-by-default",
+    "wafEnabled": true,
+    "malwareScanning": false,
+    "breachNotificationTooling": "sns-chatops",
+    "backupPitr": true
+  }
+}

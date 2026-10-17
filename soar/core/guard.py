@@ -13,7 +13,9 @@ Rule 3 has two Phase D branches (plan §4.1, §4.2):
 * IP address (PB-05), which has no tags: the event must come from the edge
   source, carry an allow-listed edge finding type and be fresh, the address
   must be global unicast, and it must not be on the never-block list, which
-  is read on every call (unreadable -> refuse).
+  is read on every call (unreadable -> refuse). Notify-only edge types
+  (Phase E D13: the docs-api decoy) are refused with an explicit
+  analyst-review reason, so the router records BLOCKED_BY_GUARD and notifies.
 
 The guard only sees what the caller wrote. Anyone who can start cs-ir-router
 can write a "fresh edge event", so PB-05 itself re-reads the never-block list
@@ -35,6 +37,7 @@ from core.aws import error_code
 from core.config import Settings
 from core.finding import (
     EDGE_FINDING_TYPES,
+    EDGE_NOTIFY_ONLY_TYPES,
     Ec2Target,
     EcsTaskTarget,
     Finding,
@@ -53,6 +56,7 @@ Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 # never sets it, but a replayed or hand-started execution could carry any value.
 EDGE_MAX_AGE = timedelta(minutes=15)
 EDGE_MAX_FUTURE = timedelta(seconds=60)
+NOTIFY_ONLY_REASON = "notify-only edge finding (decoy route hit): analyst review"
 
 
 @dataclass(frozen=True)
@@ -291,6 +295,9 @@ class SafetyGuard:
         # Rule 1: edge source, fresh event.
         if finding.source != settings.edge_event_source:
             return Decision(False, dry_run, "event is not from the edge source")
+        # Phase E (D13): recorded + notified, never blocked.
+        if finding.type in EDGE_NOTIFY_ONLY_TYPES:
+            return Decision(False, dry_run, NOTIFY_ONLY_REASON)
         # Only edge finding types PB-05 knows how to corroborate (audit A1).
         if finding.type not in EDGE_FINDING_TYPES:
             return Decision(False, dry_run, "edge finding type is not allowed")

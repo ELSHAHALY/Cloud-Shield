@@ -1,0 +1,182 @@
+{
+  "default": {
+    "attack_techniques": [],
+    "eradication": [
+      "Review the finding in GuardDuty and decide whether it is a true positive."
+    ],
+    "impact": "No automated triage for this finding type: analyst review required.",
+    "recovery": [
+      "Record the outcome on the incident before closing it."
+    ],
+    "references": [],
+    "scenario": "default",
+    "tactic": "Unclassified"
+  },
+  "generatedBy": "soar/tools/export_attack_table.py (from core/attack.py)",
+  "rules": [
+    {
+      "match": {
+        "prefix": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1552.005"
+        ],
+        "eradication": [
+          "Confirm the revoke-older-sessions deny is on the instance role (PB-01).",
+          "Find the IMDS access path (SSRF or a shell) on the instance from the EBS snapshot.",
+          "Enforce IMDSv2 with hop limit 1 on the launch template.",
+          "Review CloudTrail for every call made with the stolen session."
+        ],
+        "impact": "Instance-role credentials were used from outside AWS: the attacker held the report-worker's permissions until the sessions were revoked.",
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy.",
+          "Keep the snapshot and manifest until the case is closed."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ],
+        "scenario": "A",
+        "tactic": "Credential Access"
+      }
+    },
+    {
+      "match": {
+        "prefix": "Recon:"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1046"
+        ],
+        "eradication": [
+          "Identify the scanning process from the EBS snapshot (PB-01 evidence).",
+          "Check the scanned targets' logs for follow-up connections."
+        ],
+        "impact": "An instance scanned other hosts: likely an early foothold looking for lateral targets.",
+        "recovery": [
+          "Replace the quarantined instance from a clean launch template (ADR-0003).",
+          "Remove the quarantine NACL entries only after the replacement is healthy."
+        ],
+        "references": [
+          "docs/adr/0003-pb01-nacl-quarantine.md"
+        ],
+        "scenario": "A-recon",
+        "tactic": "Discovery"
+      }
+    },
+    {
+      "match": {
+        "prefix": "UnauthorizedAccess:IAMUser/"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1078",
+          "T1552.001"
+        ],
+        "eradication": [
+          "Confirm the key is Inactive and the session-revocation deny is on the user (PB-02).",
+          "Find where the key leaked (repository, CI log, workstation) and purge it.",
+          "Review CloudTrail for every call made with the key."
+        ],
+        "impact": "A long-term IAM access key was used by an untrusted caller.",
+        "recovery": [
+          "Delete the deactivated key once the investigation no longer needs it.",
+          "Issue a replacement credential only if the user still needs one (prefer a role)."
+        ],
+        "references": [],
+        "scenario": "B",
+        "tactic": "Initial Access / Credential Access"
+      }
+    },
+    {
+      "match": {
+        "prefix": "Policy:S3/"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1530"
+        ],
+        "eradication": [
+          "Confirm all four Block Public Access flags are on (PB-03 read-back).",
+          "Review S3 data events for anonymous GetObject during the exposure window.",
+          "Codify the block in Terraform (the report adds a ready-to-apply block when PB-03 recorded a valid bucket name) so drift is visible."
+        ],
+        "impact": "A project bucket's public-access protection was disabled: its objects may have been readable.",
+        "recovery": [
+          "Remove or rewrite the bucket policy statements that granted public access.",
+          "Rotate any secret that was stored in the exposed objects."
+        ],
+        "references": [],
+        "scenario": "C",
+        "tactic": "Collection"
+      }
+    },
+    {
+      "extraTechniquesWhenContains": [
+        {
+          "contains": "CryptoCurrency",
+          "techniques": [
+            "T1496"
+          ]
+        }
+      ],
+      "match": {
+        "contains": ":Runtime/"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1610",
+          "T1059"
+        ],
+        "eradication": [
+          "Capture volatile state with ECS Exec from a sibling task BEFORE approving eradication (the runbook's human step).",
+          "Build and scan a new image; deploy it by digest. Replacements of a compromised image are compromised too.",
+          "Review the task-definition environment and task role for exposed secrets."
+        ],
+        "impact": "Unexpected code ran inside an application container. Containment stopped the task and redeployed the service from the SAME image digest (D12).",
+        "recovery": [
+          "Confirm the new deployment is PRIMARY and healthy.",
+          "Keep the PB-04 prestate evidence object for the case (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.1",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ],
+        "scenario": "D",
+        "tactic": "Execution"
+      }
+    },
+    {
+      "match": {
+        "prefix": "CloudShield:IPAddress/"
+      },
+      "triage": {
+        "attack_techniques": [
+          "T1190",
+          "T1595",
+          "T1499"
+        ],
+        "eradication": [
+          "Review WAF logs (query 04) for the client's URIs and terminating rules.",
+          "Check the application audit trail for requests from the address that succeeded."
+        ],
+        "impact": "A client exceeded the edge rate limit or hit a decoy route: probing or abuse of the public app.",
+        "recovery": [
+          "The PB-05 sweeper lifts the block automatically once blockExpiresAt has passed (D15); tools/list_expired_blocks.py cross-checks expired, lost and orphan entries.",
+          "Lift it early by hand if the address is shared (NAT, carrier gateway) or a false positive (docs/runbooks/pb04-pb05-recovery.md)."
+        ],
+        "references": [
+          "docs/plans/s1-s2-edge-identity-waf.md §4.2",
+          "docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md",
+          "docs/runbooks/pb04-pb05-recovery.md"
+        ],
+        "scenario": "E",
+        "tactic": "Initial Access / Reconnaissance / Impact"
+      }
+    }
+  ],
+  "schemaVersion": "1",
+  "semantics": "first matching rule wins; prefix = startsWith, contains = substring; a non-string or unmatched type gets `default`"
+}

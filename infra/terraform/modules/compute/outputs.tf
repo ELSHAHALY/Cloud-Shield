@@ -63,3 +63,8 @@ output "ecr_push_role_arn" {
   description = "Set as the GitHub repository variable AWS_ECR_PUSH_ROLE_ARN. null without github_oidc_provider_arn."
   value       = one(aws_iam_role.ci_push[*].arn)
 }
+
+output "ecr_repository_name" {
+  description = "Injected into the task definition as ECR_REPOSITORY_NAME (posture read, Phase E D18)."
+  value       = aws_ecr_repository.app.name
+}

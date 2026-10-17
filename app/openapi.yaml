@@ -1,0 +1,1313 @@
+openapi: 3.1.0
+info:
+  title: CloudShield docs-api
+  version: 1.0.0
+  description: |
+    Multi-tenant document API, SOC read model and GRC hub (Phase E plan §3).
+
+    Paths are those the container sees: API Gateway strips `/api` (local nginx
+    does the same). Every response carries `X-Request-Id` and
+    `Cache-Control: no-store`; errors are RFC 9457 `application/problem+json`.
+    The tenant comes only from the verified `custom:tenant_id` claim; another
+    tenant's resource is a 404. This spec is never served by the API.
+servers:
+  - url: /
+    description: Container paths. The edge (CloudFront → API Gateway) and local nginx serve them under /api.
+security:
+  - cognitoIdToken: []
+tags:
+  - name: health
+  - name: me
+  - name: documents
+  - name: audit
+  - name: agreements
+  - name: grc
+  - name: soc
+  - name: decoy
+    description: Decoy route (D13–D15). Notify-only; documented for auditor visibility.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Liveness only (no version, no dependency checks).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /me:
+    get:
+      tags: [me]
+      operationId: getMe
+      responses:
+        "200":
+          description: The verified principal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /documents:
+    get:
+      tags: [documents]
+      operationId: listDocuments
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Newest first; tombstones are excluded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentPage" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [documents]
+      operationId: createDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DocumentCreate" }
+      responses:
+        "201":
+          description: Metadata recorded; status PENDING_UPLOAD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentMeta" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /documents/{docId}:
+    parameters:
+      - $ref: "#/components/parameters/DocId"
+    get:
+      tags: [documents]
+      operationId: getDocument
+      responses:
+        "200":
+          description: Document metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentMeta" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      tags: [documents]
+      operationId: patchDocument
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          schema: { type: string, pattern: '^"\d{1,9}"$', maxLength: 11 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DocumentPatch" }
+      responses:
+        "200":
+          description: Updated metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentMeta" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [documents]
+      operationId: deleteDocument
+      responses:
+        "204":
+          description: Tombstoned; the S3 object gets a delete marker (erasure completes when non-current versions expire, 30 days).
+        default: { $ref: "#/components/responses/Problem" }
+
+  /documents/{docId}/content:
+    parameters:
+      - $ref: "#/components/parameters/DocId"
+    put:
+      tags: [documents]
+      operationId: uploadDocumentContent
+      description: Raw body; Content-Type must equal the declared type. The server recomputes SHA-256 and sniffs magic bytes.
+      requestBody:
+        required: true
+        content:
+          application/pdf:
+            schema: { type: string, format: binary }
+          text/plain:
+            schema: { type: string, format: binary }
+          image/png:
+            schema: { type: string, format: binary }
+          image/jpeg:
+            schema: { type: string, format: binary }
+          application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Content stored; status AVAILABLE.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentMeta" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /documents/{docId}/download:
+    parameters:
+      - $ref: "#/components/parameters/DocId"
+    get:
+      tags: [documents]
+      operationId: getDownloadUrl
+      responses:
+        "200":
+          description: A version-pinned pre-signed GET (navigation, not fetch).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DownloadUrl" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /audit:
+    get:
+      tags: [audit]
+      operationId: listTenantAudit
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: The caller's tenant audit trail, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditPage" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /agreements:
+    get:
+      tags: [agreements]
+      operationId: listAgreements
+      responses:
+        "200":
+          description: The agreement catalogue with server-computed text hashes.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items: { $ref: "#/components/schemas/Agreement" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /agreements/status:
+    get:
+      tags: [agreements]
+      operationId: getAgreementStatus
+      responses:
+        "200":
+          description: Acceptance status for the caller's tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgreementStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /agreements/{agreementId}/{version}/text:
+    parameters:
+      - $ref: "#/components/parameters/AgreementId"
+      - name: version
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/AgreementVersion" }
+    get:
+      tags: [agreements]
+      operationId: getAgreementText
+      responses:
+        "200":
+          description: The agreement text (render as plain text only).
+          content:
+            text/plain:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /agreements/{agreementId}/accept:
+    parameters:
+      - $ref: "#/components/parameters/AgreementId"
+    post:
+      tags: [agreements]
+      operationId: acceptAgreement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptanceRequest" }
+      responses:
+        "200":
+          description: Already accepted; the existing record (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Acceptance" }
+        "201":
+          description: Acceptance recorded (click-through, not an e-signature).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Acceptance" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /grc/ruleset:
+    get:
+      tags: [grc]
+      operationId: getRuleset
+      responses:
+        "200":
+          description: Ruleset identity, disclaimer and frameworks.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RulesetSummary" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /grc/responsibility-matrix:
+    get:
+      tags: [grc]
+      operationId: getResponsibilityMatrix
+      responses:
+        "200":
+          description: Shared-responsibility matrix (AWS built; Azure/GCP mapped).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResponsibilityMatrix" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /grc/profile:
+    get:
+      tags: [grc]
+      operationId: getGrcProfile
+      responses:
+        "200":
+          description: The tenant's GRC profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrcProfileRecord" }
+        default: { $ref: "#/components/responses/Problem" }
+    put:
+      tags: [grc]
+      operationId: putGrcProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrcProfile" }
+      responses:
+        "200":
+          description: Stored profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrcProfileRecord" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /grc/assessment:
+    get:
+      tags: [grc]
+      operationId: getGrcAssessment
+      responses:
+        "200":
+          description: Deterministic rule evaluation over the tenant profile and platform facts. Not legal advice.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrcAssessment" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/overview:
+    get:
+      tags: [soc]
+      operationId: getSocOverview
+      responses:
+        "200":
+          description: Latest incidents (≤ 50) and 24 h metrics in one call (polled every 15 s).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocOverview" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/incidents:
+    get:
+      tags: [soc]
+      operationId: listIncidents
+      parameters:
+        - name: status
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/IncidentStatus" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Incidents in one status, newest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentPage" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/incidents/{incidentId}:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      tags: [soc]
+      operationId: getIncident
+      responses:
+        "200":
+          description: Allow-listed projection of the incident row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentDetail" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/incidents/{incidentId}/evidence:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      tags: [soc]
+      operationId: verifyIncidentEvidence
+      responses:
+        "200":
+          description: SHA-256 recomputed from S3 for every evidence record (live verification view).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceVerification" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/incidents/{incidentId}/report:
+    parameters:
+      - $ref: "#/components/parameters/IncidentId"
+    get:
+      tags: [soc]
+      operationId: getIncidentReport
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema: { type: string, enum: [json, md], default: json }
+      responses:
+        "200":
+          description: IR report (JSON) or a Markdown attachment (download only, never rendered).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IrReport" }
+            text/markdown:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/metrics:
+    get:
+      tags: [soc]
+      operationId: getSocMetrics
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: [24h, 7d, 30d], default: 24h }
+      responses:
+        "200":
+          description: MTTC, status counts and ATT&CK breakdown for the window.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SocMetrics" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/posture:
+    get:
+      tags: [soc]
+      operationId: getPosture
+      responses:
+        "200":
+          description: Build gates, image policy, live ECR scan and containment health.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Posture" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /soc/audit:
+    get:
+      tags: [soc]
+      operationId: listPlatformAudit
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: The platform-scoped (`_platform`) audit trail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditPage" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /admin:
+    x-cloudshield-decoy: true
+    get:
+      tags: [decoy]
+      operationId: decoyAdmin
+      summary: Decoy (every method). Mounted before authentication; never reads a body.
+      security: []
+      responses:
+        "403":
+          description: Identical in shape to any RBAC denial.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /admin/{rest}:
+    x-cloudshield-decoy: true
+    parameters:
+      - name: rest
+        in: path
+        required: true
+        schema: { type: string, maxLength: 1024 }
+    get:
+      tags: [decoy]
+      operationId: decoyAdminRest
+      summary: Decoy (every method). Mounted before authentication; never reads a body.
+      security: []
+      responses:
+        "403":
+          description: Identical in shape to any RBAC denial.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+components:
+  securitySchemes:
+    cognitoIdToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito ID token (re-verified by the app; plan D5).
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 512, pattern: "^[A-Za-z0-9_-]+$" }
+    From:
+      name: from
+      in: query
+      required: false
+      schema: { type: string, format: date-time, maxLength: 40 }
+    To:
+      name: to
+      in: query
+      required: false
+      schema: { type: string, format: date-time, maxLength: 40 }
+    DocId:
+      name: docId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/DocId" }
+    IncidentId:
+      name: incidentId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[\w.:-]{1,128}$', maxLength: 128 }
+    AgreementId:
+      name: agreementId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AgreementId" }
+
+  responses:
+    Problem:
+      description: RFC 9457 problem.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string, maxLength: 128 }
+        title: { type: string, maxLength: 128 }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        code:
+          type: string
+          enum: [UNAUTHENTICATED, TENANT_INVALID, FORBIDDEN, AGREEMENT_REQUIRED, NOT_FOUND,
+                 VALIDATION_FAILED, CONFLICT, PRECONDITION_FAILED, PAYLOAD_TOO_LARGE,
+                 UNSUPPORTED_MEDIA_TYPE, INTEGRITY_MISMATCH, RATE_LIMITED,
+                 SERVICE_UNAVAILABLE, INTERNAL]
+        detail: { type: string, maxLength: 256 }
+        requestId: { type: string, maxLength: 64 }
+        errors:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, message]
+            properties:
+              path: { type: string, maxLength: 256 }
+              message: { type: string, maxLength: 256 }
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+
+    Group:
+      type: string
+      enum: [admin, member, auditor, secops-analyst]
+
+    Permission:
+      type: string
+      enum: ["doc:read", "doc:write", "doc:delete", "audit:read", "agreement:read",
+             "agreement:accept", "grc:read", "grc:assess", "grc:profile:write",
+             "soc:read", "soc:evidence", "posture:read"]
+
+    Me:
+      type: object
+      additionalProperties: false
+      required: [sub, tenantId, groups, permissions]
+      properties:
+        sub: { type: string, maxLength: 128 }
+        email: { type: string, maxLength: 256 }
+        tenantId: { $ref: "#/components/schemas/TenantId" }
+        groups: { type: array, maxItems: 4, items: { $ref: "#/components/schemas/Group" } }
+        permissions: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/Permission" } }
+
+    TenantId:
+      type: string
+      pattern: "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+      maxLength: 64
+
+    DocId:
+      type: string
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+      maxLength: 36
+
+    Sha256Hex:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+
+    ContentType:
+      type: string
+      enum: [application/pdf, text/plain, image/png, image/jpeg,
+             application/vnd.openxmlformats-officedocument.wordprocessingml.document]
+
+    Classification:
+      type: string
+      enum: [public, internal, confidential, restricted]
+
+    Tags:
+      type: array
+      maxItems: 10
+      uniqueItems: true
+      items: { type: string, minLength: 1, maxLength: 32 }
+
+    DocumentCreate:
+      type: object
+      additionalProperties: false
+      required: [title, contentType, sizeBytes, sha256, classification]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        contentType: { $ref: "#/components/schemas/ContentType" }
+        sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+        sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        classification: { $ref: "#/components/schemas/Classification" }
+        tags: { $ref: "#/components/schemas/Tags" }
+
+    DocumentPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        classification: { $ref: "#/components/schemas/Classification" }
+        tags: { $ref: "#/components/schemas/Tags" }
+
+    DocumentStatus:
+      type: string
+      enum: [PENDING_UPLOAD, AVAILABLE]
+
+    DocumentMeta:
+      type: object
+      additionalProperties: false
+      required: [docId, title, contentType, sizeBytes, sha256, classification, tags, ownerSub,
+                 status, createdAt, updatedAt, version]
+      properties:
+        docId: { $ref: "#/components/schemas/DocId" }
+        title: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        contentType: { $ref: "#/components/schemas/ContentType" }
+        sizeBytes: { type: integer, minimum: 1 }
+        sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        classification: { $ref: "#/components/schemas/Classification" }
+        tags: { $ref: "#/components/schemas/Tags" }
+        ownerSub: { type: string, maxLength: 128 }
+        status: { $ref: "#/components/schemas/DocumentStatus" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+
+    DocumentPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/DocumentMeta" } }
+        nextCursor: { type: string, maxLength: 512 }
+
+    DownloadUrl:
+      type: object
+      additionalProperties: false
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, maxLength: 4096 }
+        expiresAt: { type: string, format: date-time }
+
+    AuditAction:
+      type: string
+      enum: [DOCUMENT_CREATED, DOCUMENT_UPLOADED, DOCUMENT_UPDATED, DOCUMENT_DELETED,
+             DOCUMENT_DOWNLOAD_URL_ISSUED, AGREEMENT_ACCEPTED, GRC_PROFILE_UPDATED,
+             ACCESS_DENIED, DECOY_ROUTE_HIT, SOC_EVIDENCE_VERIFIED, SOC_REPORT_EXPORTED]
+
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [eventKey, schemaVersion, eventId, at, action, outcome, actor, resource,
+                 sourceIp, sourceIpTrusted, userAgent, requestId, details]
+      properties:
+        eventKey: { type: string, maxLength: 128 }
+        schemaVersion: { type: string, const: "1" }
+        eventId: { type: string, maxLength: 36 }
+        at: { type: string, format: date-time }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        outcome: { type: string, enum: [SUCCESS, DENIED] }
+        actor:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type: { type: string, enum: [user, anonymous] }
+            sub: { type: string, maxLength: 128 }
+            tenantId: { type: string, maxLength: 64 }
+            groups: { type: array, maxItems: 4, items: { type: string, maxLength: 32 } }
+            tokenPresent: { type: boolean }
+        resource:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type: { type: string, maxLength: 32 }
+            id: { type: string, maxLength: 256 }
+        sourceIp: { type: [string, "null"], maxLength: 45 }
+        sourceIpTrusted: { type: boolean }
+        userAgent: { type: [string, "null"], maxLength: 256 }
+        requestId: { type: string, maxLength: 64 }
+        details:
+          type: object
+          maxProperties: 12
+          additionalProperties:
+            type: [string, number, boolean, "null"]
+
+    AuditPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/AuditEvent" } }
+        nextCursor: { type: string, maxLength: 512 }
+
+    AgreementId:
+      type: string
+      pattern: "^[a-z][a-z0-9-]{1,31}$"
+
+    AgreementVersion:
+      type: string
+      pattern: '^\d{4}-\d{2}(?:\.\d+)?$'
+      maxLength: 16
+
+    Agreement:
+      type: object
+      additionalProperties: false
+      required: [agreementId, version, title, sha256, effectiveDate, required]
+      properties:
+        agreementId: { $ref: "#/components/schemas/AgreementId" }
+        version: { $ref: "#/components/schemas/AgreementVersion" }
+        title: { type: string, maxLength: 200 }
+        sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        effectiveDate: { type: string, format: date }
+        required: { type: boolean }
+
+    AcceptanceRequest:
+      type: object
+      additionalProperties: false
+      required: [version, sha256, authorityConfirmed]
+      properties:
+        version: { $ref: "#/components/schemas/AgreementVersion" }
+        sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        authorityConfirmed: { type: boolean, const: true }
+
+    Acceptance:
+      type: object
+      additionalProperties: false
+      required: [agreementId, version, textSha256, textMediaType, acceptedBy, tenantId, acceptedAt,
+                 sourceIp, sourceIpTrusted, userAgent, requestId, method, authorityConfirmed,
+                 schemaVersion]
+      properties:
+        agreementId: { $ref: "#/components/schemas/AgreementId" }
+        version: { $ref: "#/components/schemas/AgreementVersion" }
+        textSha256: { $ref: "#/components/schemas/Sha256Hex" }
+        textMediaType: { type: string, const: "text/plain; charset=utf-8" }
+        acceptedBy:
+          type: object
+          additionalProperties: false
+          required: [sub, groups]
+          properties:
+            sub: { type: string, maxLength: 128 }
+            groups: { type: array, maxItems: 4, items: { type: string, maxLength: 32 } }
+        tenantId: { $ref: "#/components/schemas/TenantId" }
+        acceptedAt: { type: string, format: date-time }
+        sourceIp: { type: [string, "null"], maxLength: 45 }
+        sourceIpTrusted: { type: boolean }
+        userAgent: { type: [string, "null"], maxLength: 256 }
+        requestId: { type: string, maxLength: 64 }
+        method: { type: string, const: click-through }
+        authorityConfirmed: { type: boolean, const: true }
+        schemaVersion: { type: string, const: "1" }
+
+    AgreementStatus:
+      type: object
+      additionalProperties: false
+      required: [complete, accepted, pending]
+      properties:
+        complete: { type: boolean }
+        accepted: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/Acceptance" } }
+        pending: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/Agreement" } }
+
+    CitationStatus:
+      type: string
+      enum: [doc, verify]
+
+    Citation:
+      type: object
+      additionalProperties: false
+      required: [source, status]
+      properties:
+        source: { type: string, maxLength: 200 }
+        article: { type: string, maxLength: 100 }
+        status: { $ref: "#/components/schemas/CitationStatus" }
+        url: { type: string, maxLength: 500 }
+
+    Framework:
+      type: object
+      additionalProperties: false
+      required: [id, title, citation, regulator, citationStatus]
+      properties:
+        id: { type: string, maxLength: 32 }
+        title: { type: string, maxLength: 200 }
+        citation: { type: string, maxLength: 200 }
+        regulator: { type: string, maxLength: 200 }
+        citationStatus: { $ref: "#/components/schemas/CitationStatus" }
+        notes: { type: string, maxLength: 1000 }
+
+    Jurisdiction:
+      type: object
+      additionalProperties: false
+      required: [id, name, frameworks]
+      properties:
+        id: { type: string, enum: [EG, EU, SA] }
+        name: { type: string, maxLength: 64 }
+        frameworks: { type: array, maxItems: 10, items: { type: string, maxLength: 32 } }
+
+    RulesetSummary:
+      type: object
+      additionalProperties: false
+      required: [version, sha256, lastReviewed, disclaimer, jurisdictions, frameworks, ruleCount]
+      properties:
+        version: { type: string, maxLength: 32 }
+        sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        lastReviewed: { type: string, format: date }
+        disclaimer: { type: string, maxLength: 2000 }
+        jurisdictions: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/Jurisdiction" } }
+        frameworks: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/Framework" } }
+        ruleCount: { type: integer, minimum: 0 }
+
+    MatrixCell:
+      type: object
+      additionalProperties: false
+      required: [service, responsibility, notes, status, verify]
+      properties:
+        service: { type: string, maxLength: 200 }
+        responsibility: { type: string, enum: [provider, shared, customer] }
+        notes: { type: string, maxLength: 1000 }
+        status: { type: string, enum: [built, mapped] }
+        verify: { type: boolean }
+
+    ResponsibilityMatrix:
+      type: object
+      additionalProperties: false
+      required: [version, lastReviewed, disclaimer, providers, controls, layers]
+      properties:
+        version: { type: string, maxLength: 32 }
+        lastReviewed: { type: string, format: date }
+        disclaimer: { type: string, maxLength: 2000 }
+        providers:
+          type: array
+          maxItems: 3
+          items: { type: string, enum: [aws, azure, gcp] }
+        controls:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, control, layer, cells]
+            properties:
+              id: { type: string, maxLength: 64 }
+              control: { type: string, maxLength: 200 }
+              layer: { type: string, maxLength: 64 }
+              cells:
+                type: object
+                additionalProperties: false
+                required: [aws, azure, gcp]
+                properties:
+                  aws: { $ref: "#/components/schemas/MatrixCell" }
+                  azure: { $ref: "#/components/schemas/MatrixCell" }
+                  gcp: { $ref: "#/components/schemas/MatrixCell" }
+        layers:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [layer, owner, notes]
+            properties:
+              layer: { type: string, maxLength: 64 }
+              owner: { type: string, maxLength: 200 }
+              notes: { type: string, maxLength: 1000 }
+
+    GrcProfile:
+      type: object
+      additionalProperties: false
+      required: [jurisdictions, sector, cbeRegulated, processesPersonalData,
+                 processesSensitiveData, governmentData, dataSubjectRegions]
+      properties:
+        jurisdictions:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, enum: [EG, EU, SA] }
+        sector:
+          type: string
+          enum: [general, financial, health, government, critical-infrastructure]
+        cbeRegulated: { type: boolean }
+        processesPersonalData: { type: boolean }
+        processesSensitiveData: { type: boolean }
+        governmentData: { type: boolean }
+        dataSubjectRegions:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, enum: [EG, EU, SA, OTHER] }
+
+    GrcProfileRecord:
+      type: object
+      additionalProperties: false
+      required: [profile, version, updatedAt, updatedBy]
+      properties:
+        profile: { $ref: "#/components/schemas/GrcProfile" }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+        updatedBy: { type: string, maxLength: 128 }
+
+    GrcFindingStatus:
+      type: string
+      enum: [MET, PARTIAL, GAP, CUSTOMER_ACTION, NOT_APPLICABLE, INFO]
+
+    GrcFinding:
+      type: object
+      additionalProperties: false
+      required: [ruleId, framework, topic, status, obligation, citations, citationStatus,
+                 controls, rationale]
+      properties:
+        ruleId: { type: string, maxLength: 64 }
+        framework: { type: string, maxLength: 32 }
+        topic: { type: string, maxLength: 64 }
+        status: { $ref: "#/components/schemas/GrcFindingStatus" }
+        obligation: { type: string, maxLength: 2000 }
+        parameters:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: [string, number, boolean] }
+        citations: { type: array, maxItems: 10, items: { $ref: "#/components/schemas/Citation" } }
+        citationStatus: { $ref: "#/components/schemas/CitationStatus" }
+        controls: { type: array, maxItems: 10, items: { type: string, maxLength: 64 } }
+        rationale: { type: string, maxLength: 2000 }
+
+    GrcAssessment:
+      type: object
+      additionalProperties: false
+      required: [rulesetVersion, rulesetSha256, profileVersion, generatedAt, platformFacts,
+                 disclaimer, summary, findings]
+      properties:
+        rulesetVersion: { type: string, maxLength: 32 }
+        rulesetSha256: { $ref: "#/components/schemas/Sha256Hex" }
+        profileVersion: { type: integer, minimum: 1 }
+        generatedAt: { type: string, format: date-time }
+        platformFacts:
+          type: object
+          maxProperties: 30
+          additionalProperties:
+            type: [string, number, boolean, array]
+            items: { type: string, maxLength: 32 }
+        disclaimer: { type: string, maxLength: 2000 }
+        summary:
+          type: object
+          additionalProperties: false
+          required: [MET, PARTIAL, GAP, CUSTOMER_ACTION, NOT_APPLICABLE, INFO]
+          properties:
+            MET: { type: integer, minimum: 0 }
+            PARTIAL: { type: integer, minimum: 0 }
+            GAP: { type: integer, minimum: 0 }
+            CUSTOMER_ACTION: { type: integer, minimum: 0 }
+            NOT_APPLICABLE: { type: integer, minimum: 0 }
+            INFO: { type: integer, minimum: 0 }
+        findings: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/GrcFinding" } }
+
+    IncidentStatus:
+      type: string
+      enum: [DETECTED, CONTAINED, WOULD_CONTAIN_DRY_RUN, BLOCKED_BY_GUARD,
+             NO_PLAYBOOK_ANALYST_REVIEW, FAILED]
+
+    NullableString:
+      type: [string, "null"]
+      maxLength: 2048
+
+    NullableNumber:
+      type: [number, "null"]
+
+    IncidentSummary:
+      type: object
+      additionalProperties: false
+      required: [incidentId, status, displayStatus, findingType, severity, eventTime,
+                 containedAt, mttcSeconds, scenario, tactic]
+      properties:
+        incidentId: { type: string, maxLength: 128 }
+        status: { type: string, maxLength: 64 }
+        displayStatus: { type: string, maxLength: 64 }
+        findingType: { $ref: "#/components/schemas/NullableString" }
+        severity: { $ref: "#/components/schemas/NullableNumber" }
+        eventTime: { $ref: "#/components/schemas/NullableString" }
+        containedAt: { $ref: "#/components/schemas/NullableString" }
+        mttcSeconds: { $ref: "#/components/schemas/NullableNumber" }
+        scenario: { type: string, maxLength: 32 }
+        tactic: { type: string, maxLength: 64 }
+
+    IncidentPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/IncidentSummary" } }
+        nextCursor: { type: string, maxLength: 512 }
+
+    Triage:
+      type: object
+      additionalProperties: false
+      required: [scenario, techniques, tactic, impact, eradication, recovery, references]
+      properties:
+        scenario: { type: string, maxLength: 32 }
+        techniques: { type: array, maxItems: 20, items: { type: string, maxLength: 16 } }
+        tactic: { type: string, maxLength: 64 }
+        impact: { type: string, maxLength: 2048 }
+        eradication: { type: array, maxItems: 20, items: { type: string, maxLength: 2048 } }
+        recovery: { type: array, maxItems: 20, items: { type: string, maxLength: 2048 } }
+        references: { type: array, maxItems: 20, items: { type: string, maxLength: 256 } }
+
+    TimelineEntry:
+      type: object
+      additionalProperties: false
+      required: [at, kind, label]
+      properties:
+        at: { $ref: "#/components/schemas/NullableString" }
+        kind: { type: string, enum: [DETECTED, GUARD, ACTION, CONTAINED, WOULD_CONTAIN, FAILED, EVIDENCE, ANALYST] }
+        label: { type: string, maxLength: 2048 }
+        detail: { type: string, maxLength: 2048 }
+
+    EvidenceRecord:
+      type: object
+      additionalProperties: false
+      required: [key, versionId, sha256]
+      properties:
+        bucket: { $ref: "#/components/schemas/NullableString" }
+        key: { type: string, maxLength: 2048 }
+        versionId: { $ref: "#/components/schemas/NullableString" }
+        sha256: { $ref: "#/components/schemas/NullableString" }
+        sha256Base64: { $ref: "#/components/schemas/NullableString" }
+
+    ProjectedAction:
+      type: object
+      additionalProperties: false
+      required: [at, playbook, step]
+      properties:
+        at: { $ref: "#/components/schemas/NullableString" }
+        playbook: { $ref: "#/components/schemas/NullableString" }
+        step: { $ref: "#/components/schemas/NullableString" }
+        details: { type: string, maxLength: 2048 }
+
+    IncidentDetail:
+      type: object
+      additionalProperties: false
+      required: [incidentId, status, displayStatus, findingType, severity, resourceType,
+                 eventTime, firstEventTime, findingCreatedAt, sfnStartedAt, containedAt,
+                 wouldContainAt, attempts, mttcSeconds, triage, timeline, guardReason, failure,
+                 actions, evidenceRecords, executionArn, block, relatedAudit, notifyOnly]
+      properties:
+        incidentId: { type: string, maxLength: 128 }
+        status: { type: string, maxLength: 64 }
+        displayStatus: { type: string, maxLength: 64 }
+        notifyOnly: { type: boolean }
+        findingType: { $ref: "#/components/schemas/NullableString" }
+        severity: { $ref: "#/components/schemas/NullableNumber" }
+        resourceType: { $ref: "#/components/schemas/NullableString" }
+        eventTime: { $ref: "#/components/schemas/NullableString" }
+        firstEventTime: { $ref: "#/components/schemas/NullableString" }
+        findingCreatedAt: { $ref: "#/components/schemas/NullableString" }
+        sfnStartedAt: { $ref: "#/components/schemas/NullableString" }
+        containedAt: { $ref: "#/components/schemas/NullableString" }
+        wouldContainAt: { $ref: "#/components/schemas/NullableString" }
+        attempts: { $ref: "#/components/schemas/NullableNumber" }
+        mttcSeconds: { $ref: "#/components/schemas/NullableNumber" }
+        triage: { $ref: "#/components/schemas/Triage" }
+        timeline: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/TimelineEntry" } }
+        guardReason: { $ref: "#/components/schemas/NullableString" }
+        failure: { $ref: "#/components/schemas/NullableString" }
+        actions: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/ProjectedAction" } }
+        evidenceRecords: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/EvidenceRecord" } }
+        executionArn: { $ref: "#/components/schemas/NullableString" }
+        block:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [blockedCidr, blockState, blockExpiresAt]
+          properties:
+            blockedCidr: { $ref: "#/components/schemas/NullableString" }
+            blockState: { $ref: "#/components/schemas/NullableString" }
+            blockExpiresAt: { $ref: "#/components/schemas/NullableString" }
+        relatedAudit: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/AuditEvent" } }
+
+    EvidenceCheck:
+      type: object
+      additionalProperties: false
+      required: [key, versionId, recordedSha256, actualSha256, ok, error, retention, legalHold]
+      properties:
+        key: { type: string, maxLength: 2048 }
+        versionId: { $ref: "#/components/schemas/NullableString" }
+        recordedSha256: { $ref: "#/components/schemas/NullableString" }
+        actualSha256: { $ref: "#/components/schemas/NullableString" }
+        ok: { type: boolean }
+        error: { $ref: "#/components/schemas/NullableString" }
+        retention:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [mode, retainUntil]
+          properties:
+            mode: { $ref: "#/components/schemas/NullableString" }
+            retainUntil: { $ref: "#/components/schemas/NullableString" }
+        legalHold: { type: [boolean, "null"] }
+
+    EvidenceVerification:
+      type: object
+      additionalProperties: false
+      required: [incidentId, verifiedAt, chainOfCustodyOk, objectLock, checks, truncated, label]
+      properties:
+        incidentId: { type: string, maxLength: 128 }
+        verifiedAt: { type: string, format: date-time }
+        chainOfCustodyOk: { type: [boolean, "null"] }
+        objectLock:
+          type: object
+          additionalProperties: false
+          required: [enabled, mode, days]
+          properties:
+            enabled: { type: [boolean, "null"] }
+            mode: { $ref: "#/components/schemas/NullableString" }
+            days: { $ref: "#/components/schemas/NullableNumber" }
+        checks: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/EvidenceCheck" } }
+        truncated: { type: boolean }
+        label: { type: string, maxLength: 256 }
+
+    IrEvidence:
+      type: object
+      additionalProperties: false
+      required: [key, version_id, recorded_sha256, actual_sha256, ok, error]
+      properties:
+        key: { type: string, maxLength: 2048 }
+        version_id: { $ref: "#/components/schemas/NullableString" }
+        recorded_sha256: { $ref: "#/components/schemas/NullableString" }
+        actual_sha256: { $ref: "#/components/schemas/NullableString" }
+        ok: { type: boolean }
+        error: { $ref: "#/components/schemas/NullableString" }
+
+    IrReport:
+      type: object
+      additionalProperties: false
+      required: [incident_id, status, finding_type, severity, resource_type, finding_created_at,
+                 event_time, contained_at, containment_verified, mttc_seconds,
+                 detection_latency_seconds, mttc_target_met, execution_arn, actions, evidence,
+                 guard_reason, failure, executive_summary, chain_of_custody_ok, generated_by,
+                 authoritative]
+      properties:
+        incident_id: { type: string, maxLength: 128 }
+        status: { type: string, maxLength: 64 }
+        finding_type: { $ref: "#/components/schemas/NullableString" }
+        severity: { $ref: "#/components/schemas/NullableNumber" }
+        resource_type: { $ref: "#/components/schemas/NullableString" }
+        finding_created_at: { $ref: "#/components/schemas/NullableString" }
+        event_time: { $ref: "#/components/schemas/NullableString" }
+        contained_at: { $ref: "#/components/schemas/NullableString" }
+        containment_verified: { type: [boolean, "null"] }
+        mttc_seconds: { $ref: "#/components/schemas/NullableNumber" }
+        detection_latency_seconds: { $ref: "#/components/schemas/NullableNumber" }
+        mttc_target_met: { type: [boolean, "null"] }
+        execution_arn: { $ref: "#/components/schemas/NullableString" }
+        actions: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/ProjectedAction" } }
+        evidence: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/IrEvidence" } }
+        guard_reason: { $ref: "#/components/schemas/NullableString" }
+        failure: { $ref: "#/components/schemas/NullableString" }
+        executive_summary:
+          type: object
+          additionalProperties: false
+          required: [status, mttc_verdict, scenario, attack_techniques, tactic, impact,
+                     eradication, recovery, references]
+          properties:
+            status: { type: string, maxLength: 64 }
+            mttc_verdict: { type: string, maxLength: 256 }
+            scenario: { type: string, maxLength: 32 }
+            attack_techniques: { type: array, maxItems: 20, items: { type: string, maxLength: 16 } }
+            tactic: { type: string, maxLength: 64 }
+            impact: { type: string, maxLength: 2048 }
+            eradication: { type: array, maxItems: 20, items: { type: string, maxLength: 2048 } }
+            recovery: { type: array, maxItems: 20, items: { type: string, maxLength: 2048 } }
+            references: { type: array, maxItems: 20, items: { type: string, maxLength: 256 } }
+        chain_of_custody_ok: { type: [boolean, "null"] }
+        generated_by: { type: string, maxLength: 256 }
+        authoritative: { type: string, maxLength: 256 }
+
+    MttcStats:
+      type: object
+      additionalProperties: false
+      required: [targetSeconds, samples, last, p50, p90, max]
+      properties:
+        targetSeconds: { type: number }
+        samples: { type: integer, minimum: 0 }
+        last: { $ref: "#/components/schemas/NullableNumber" }
+        p50: { $ref: "#/components/schemas/NullableNumber" }
+        p90: { $ref: "#/components/schemas/NullableNumber" }
+        max: { $ref: "#/components/schemas/NullableNumber" }
+
+    SocMetrics:
+      type: object
+      additionalProperties: false
+      required: [window, since, mttc, byStatus, byTactic, truncated]
+      properties:
+        window: { type: string, enum: [24h, 7d, 30d] }
+        since: { type: string, format: date-time }
+        mttc: { $ref: "#/components/schemas/MttcStats" }
+        byStatus:
+          type: object
+          additionalProperties: false
+          required: [DETECTED, CONTAINED, WOULD_CONTAIN_DRY_RUN, BLOCKED_BY_GUARD,
+                     NO_PLAYBOOK_ANALYST_REVIEW, FAILED]
+          properties:
+            DETECTED: { type: integer, minimum: 0 }
+            CONTAINED: { type: integer, minimum: 0 }
+            WOULD_CONTAIN_DRY_RUN: { type: integer, minimum: 0 }
+            BLOCKED_BY_GUARD: { type: integer, minimum: 0 }
+            NO_PLAYBOOK_ANALYST_REVIEW: { type: integer, minimum: 0 }
+            FAILED: { type: integer, minimum: 0 }
+        byTactic:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [tactic, count, techniques]
+            properties:
+              tactic: { type: string, maxLength: 64 }
+              count: { type: integer, minimum: 0 }
+              techniques: { type: array, maxItems: 20, items: { type: string, maxLength: 16 } }
+        truncated: { type: boolean }
+
+    SocOverview:
+      type: object
+      additionalProperties: false
+      required: [incidents, metrics, generatedAt]
+      properties:
+        incidents: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/IncidentSummary" } }
+        metrics: { $ref: "#/components/schemas/SocMetrics" }
+        generatedAt: { type: string, format: date-time }
+
+    GateOutcome:
+      type: string
+      enum: [success, failure, skipped, unknown]
+
+    Posture:
+      type: object
+      additionalProperties: false
+      required: [build, imagePolicy, image, containment, generatedAt]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        build:
+          type: object
+          additionalProperties: false
+          required: [commit, builtAt, ciRunId, gates, gatesEnforced, local]
+          properties:
+            commit: { type: string, maxLength: 40 }
+            builtAt: { $ref: "#/components/schemas/NullableString" }
+            ciRunId: { $ref: "#/components/schemas/NullableString" }
+            local: { type: boolean }
+            gates:
+              type: object
+              additionalProperties: false
+              required: [secrets, sast, sca, app]
+              properties:
+                secrets: { $ref: "#/components/schemas/GateOutcome" }
+                sast: { $ref: "#/components/schemas/GateOutcome" }
+                sca: { $ref: "#/components/schemas/GateOutcome" }
+                app: { $ref: "#/components/schemas/GateOutcome" }
+            gatesEnforced: { type: boolean }
+        imagePolicy: { type: string, maxLength: 512 }
+        image:
+          type: object
+          additionalProperties: false
+          required: [reference, ecrScan]
+          properties:
+            reference: { $ref: "#/components/schemas/NullableString" }
+            ecrScan:
+              type: [object, "null"]
+              additionalProperties: false
+              required: [status, critical, high, medium, low, completedAt]
+              properties:
+                status: { type: string, maxLength: 32 }
+                critical: { type: [integer, "null"], minimum: 0 }
+                high: { type: [integer, "null"], minimum: 0 }
+                medium: { type: [integer, "null"], minimum: 0 }
+                low: { type: [integer, "null"], minimum: 0 }
+                completedAt: { $ref: "#/components/schemas/NullableString" }
+        containment:
+          type: object
+          additionalProperties: false
+          required: [playbooksEnabled, dryRun, failedLast24h, lastMttcSeconds, targetSeconds]
+          properties:
+            playbooksEnabled: { type: boolean }
+            dryRun: { type: [boolean, "null"] }
+            failedLast24h: { type: [integer, "null"], minimum: 0 }
+            lastMttcSeconds: { $ref: "#/components/schemas/NullableNumber" }
+            targetSeconds: { type: number }

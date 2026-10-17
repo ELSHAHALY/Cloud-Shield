@@ -1,0 +1,9 @@
+*
+!local-dev/package.json
+!local-dev/package-lock.json
+!local-dev/.npmrc
+!local-dev/tsconfig.json
+!local-dev/tsconfig.build.json
+!local-dev/src/**
+!local-dev/fixtures/**
+!grc/agreements/**

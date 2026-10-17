@@ -717,3 +717,57 @@ def test_handler_ip_when_pb05_is_off_refuses(world: Any) -> None:
 def test_guard_without_a_never_block_reader_refuses_ips() -> None:
     g = SafetyGuard(D_SETTINGS, FakeEcs(None), lambda: False, clock=lambda: NOW)
     assert g.evaluate(events.edge_ip()).reason == "never-block list unreadable"
+
+
+# ------------------------------------------- Phase E: notify-only (D13)
+def decoy_event(address: str = "1.1.1.1", **kw: Any) -> dict[str, Any]:
+    """The docs-api decoy event (app/README.md publisher contract)."""
+    event = events.edge_ip(address, finding_id="edge-decoy-1-1-1-1-2026101410", **kw)
+    event["detail"]["type"] = "CloudShield:IPAddress/DecoyRouteHit"
+    event["detail"]["service"]["additionalInfo"] = {
+        "sample": False,
+        "publisher": "docs-api-decoy",
+        "requestId": "0192b3c4-0000-7000-8000-000000000000",
+        "authenticated": False,
+    }
+    return event
+
+
+NOTIFY_ONLY = "notify-only edge finding (decoy route hit): analyst review"
+
+
+@pytest.mark.parametrize("address", ["1.1.1.1", "2606:4700:4700::1111"])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_decoy_hit_is_notify_only_even_for_a_blockable_ip(address: str, dry_run: bool) -> None:
+    # A fresh, global, non-never-blocked address that WafRateLimitExceeded
+    # would be allowed to block: the decoy type is still refused.
+    guard_, reader = d_guard(dry_run=dry_run)
+    assert guard_.evaluate(events.edge_ip(address)).allowed is True
+    decision = guard_.evaluate(decoy_event(address))
+    assert decision == Decision(False, dry_run, NOTIFY_ONLY)
+    result = decision.to_dict()
+    assert result == {"allowed": False, "dry_run": dry_run, "reason": NOTIFY_ONLY}
+    assert type(result["allowed"]) is bool
+    assert type(result["dry_run"]) is bool
+    assert reader.calls == 0
+
+
+def test_decoy_type_is_never_blockable() -> None:
+    from core.finding import EDGE_FINDING_TYPES, EDGE_NOTIFY_ONLY_TYPES
+
+    assert "CloudShield:IPAddress/DecoyRouteHit" in EDGE_NOTIFY_ONLY_TYPES
+    assert not EDGE_NOTIFY_ONLY_TYPES & EDGE_FINDING_TYPES
+    assert frozenset({"CloudShield:IPAddress/WafRateLimitExceeded"}) == EDGE_FINDING_TYPES
+
+
+def test_decoy_hit_still_needs_the_edge_source_first() -> None:
+    settings = Settings.from_env({**PHASE_D_ENV, "EDGE_EVENT_SOURCE": "cloudshield.other"})
+    guard_, _ = d_guard(settings=settings)
+    assert guard_.evaluate(decoy_event()).reason == "event is not from the edge source"
+
+
+def test_decoy_hit_refused_even_when_never_block_unreadable_or_stale() -> None:
+    # Notify-only wins before freshness and the never-block read: the outcome
+    # is the same refusal, with the analyst-review reason.
+    guard_, _ = d_guard(never_block=None, now=EVENT_AT + timedelta(hours=2))
+    assert guard_.evaluate(decoy_event()) == Decision(False, False, NOTIFY_ONLY)

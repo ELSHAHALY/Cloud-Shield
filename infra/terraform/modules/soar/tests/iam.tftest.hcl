@@ -286,6 +286,12 @@ override_resource {
   values = {}
 }
 
+# Phase E: the app integration policy.
+override_resource {
+  target = aws_iam_role_policy.app_soc_read
+  values = {}
+}
+
 variables {
   name                         = "cs-test"
   quarantine_security_group_id = "sg-0aaaaaaaaaaaaaaaa"
@@ -634,5 +640,40 @@ run "notifier_policy_is_exactly_its_grants" {
       s.Effect == "Allow" && try(s.Condition, null) == null
     ])
     error_message = "The notifier policy is four plain Allow statements."
+  }
+}
+
+# Phase E (plan §9): the app SOC read policy alongside every playbook. The
+# task role given both ways (pb05_publisher_arns AND app_publishes_decoy)
+# appears once in the bus policy; the app policy stays read-only + one
+# conditioned PutEvents.
+run "app_integration_alongside_all_playbooks" {
+  command = apply
+
+  variables {
+    enable_app_integration = true
+    app_publishes_decoy    = true
+    app_task_role_name     = "cs-test-docs-api-task"
+    app_task_role_arn      = "arn:aws:iam::123456789012:role/cs-test-docs-api-task"
+  }
+
+  assert {
+    condition = jsonencode(sort(flatten([one([
+      for s in jsondecode(data.aws_iam_policy_document.edge_bus[0].json).Statement : s
+      if s.Effect == "Deny"
+      ]).Condition.ArnNotEquals["aws:PrincipalArn"]]))) == jsonencode([
+      "arn:aws:iam::123456789012:role/cs-test-docs-api-task",
+      "arn:aws:iam::123456789012:role/cs-test-soar-pb05-harvester",
+    ])
+    error_message = "The publisher list holds the harvester and the task role exactly once each."
+  }
+  assert {
+    condition = alltrue(flatten([
+      for s in jsondecode(data.aws_iam_policy_document.app_soc_read[0].json).Statement : [
+        for a in flatten([s.Action]) :
+        startswith(a, "dynamodb:Get") || a == "dynamodb:Query" || startswith(a, "s3:Get") || a == "kms:Decrypt" || a == "ssm:GetParameter" || (a == "events:PutEvents" && try(s.Condition.StringEquals["events:source"], null) == "cloudshield.edge")
+      ]
+    ]))
+    error_message = "The app SOC policy is reads plus one conditioned PutEvents, nothing else."
   }
 }

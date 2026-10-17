@@ -287,3 +287,23 @@ resource "aws_iam_role_policy" "task_exec" {
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_exec.json
 }
+
+# -----------------------------------------------------------------------------
+# IAM — posture read (Phase E D18): the app reports the ECR basic-scan result
+# of its own running digest. Read-only, on this repository only; ECR has no
+# finer resource than the repository. No KMS grant: the scan findings API
+# returns metadata, not image layers [inferred: verify on apply, §16 #8].
+# -----------------------------------------------------------------------------
+data "aws_iam_policy_document" "posture_read" {
+  statement {
+    sid       = "OwnImageScanFindings"
+    actions   = ["ecr:DescribeImages", "ecr:DescribeImageScanFindings"]
+    resources = [aws_ecr_repository.app.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "posture_read" {
+  name   = "posture-read"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.posture_read.json
+}

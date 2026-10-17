@@ -18,8 +18,32 @@ updates:
     schedule:
       interval: weekly
 
-  # TODO(S2): enable once app/docs-api/package.json exists
-  # - package-ecosystem: npm
-  #   directory: /app/docs-api
-  #   schedule:
-  #     interval: weekly
+  # Phase E: the three app packages. Exact versions + committed lockfiles
+  # (.npmrc save-exact, ignore-scripts); Dependabot proposes the bumps.
+  - package-ecosystem: npm
+    directories:
+      - /app/docs-api
+      - /app/spa
+      - /app/local-dev
+    schedule:
+      interval: weekly
+    groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*"]
+      dev-tooling:
+        dependency-type: development
+
+  # Digest-pinned base images (FROM ...@sha256) in the app Dockerfiles.
+  - package-ecosystem: docker
+    directories:
+      - /app/docs-api
+      - /app/spa
+      - /app/local-dev
+    schedule:
+      interval: weekly
+
+  # moto in docker-compose.local.yml.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,9 +1,15 @@
 ###############################################################################
 # Module: data — TB3 "AWS data plane (data at rest)"   Owner: S2
 #
-#   DynamoDB  documents  PK tenantId / SK docId     (tenant metadata)
-#   DynamoDB  audit      PK tenantId / SK eventKey  (FR-4, append-only)
-#   S3        documents  objects under <tenantId>/  (accessed via pre-signed URLs)
+#   DynamoDB  documents  PK tenantId / SK docId     (tenant metadata; typed sort
+#                        keys "doc#<uuidv7>" and "meta#grc-profile", Phase E D3)
+#   DynamoDB  audit      PK tenantId / SK eventKey  (FR-4, insert-only by
+#                        convention: conditional writes, no Update/Delete IAM,
+#                        stream, PITR. The stream has NO consumer yet: an
+#                        audit-stream tamper alarm is a follow-up, Phase E F4)
+#   S3        documents  objects under tenants/<tenantId>/docs/<docId>, keys
+#                        built by the server only (uploads go through the API;
+#                        downloads are pre-signed GETs)
 #   KMS       one CMK for all of the above
 #
 # Tenant isolation model (be precise about this in the viva):
@@ -278,8 +284,8 @@ data "aws_iam_policy_document" "app" {
   # attribute_not_exists on PutItem, so PutItem CAN overwrite an existing
   # event. Controls: (1) no UpdateItem/DeleteItem here; (2) the app MUST send
   # ConditionExpression "attribute_not_exists(eventKey)"; (3) the table
-  # stream records every MODIFY/REMOVE for tamper detection (detection
-  # module alarms on it); (4) PITR allows recovery.
+  # stream records every MODIFY/REMOVE (no consumer yet: a tamper alarm on
+  # it is a follow-up, Phase E F4); (4) PITR allows recovery.
   statement {
     sid       = "AuditAppendOnly"
     actions   = ["dynamodb:PutItem"]
@@ -291,10 +297,15 @@ data "aws_iam_policy_document" "app" {
     resources = [aws_dynamodb_table.audit.arn]
   }
 
+  # Phase E (F6, D8): the app reads pinned versions (GetObjectVersion) and
+  # only ever builds keys under tenants/<tenantId>/docs/<docId>.
+  # DeleteObjectVersion (audit E2): when an upload's transaction fails, the
+  # app removes the exact version it just wrote; without it that orphan stays
+  # current forever and the 30-day erasure claim (D10) would be false.
   statement {
     sid       = "DocumentObjects"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${aws_s3_bucket.documents.arn}/*"]
+    actions   = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
+    resources = ["${aws_s3_bucket.documents.arn}/tenants/*"]
   }
 
   statement {

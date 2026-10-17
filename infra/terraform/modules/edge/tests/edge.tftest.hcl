@@ -439,3 +439,102 @@ run "refuses_regions_other_than_us_east_1" {
   # it depends on.
   expect_failures = [aws_wafv2_ip_set.soar_blocked_v4, aws_wafv2_ip_set.soar_blocked_v6]
 }
+
+# =============================================================================
+# Phase E (§9, D14): the decoy route. Off by default; with the flag, exactly
+# the two decoy methods are unauthenticated.
+# =============================================================================
+run "decoy_route_absent_by_default" {
+  command = apply
+
+  variables {
+    enable_api            = true
+    nlb_arn               = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/cs-test-api-nlb/0123456789abcdef"
+    nlb_dns_name          = "cs-test-api-nlb-0123456789abcdef.elb.us-east-1.amazonaws.com"
+    cognito_user_pool_arn = "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_AbCdEfGhI"
+  }
+
+  assert {
+    condition = (
+      length(aws_api_gateway_resource.admin) == 0 && length(aws_api_gateway_resource.admin_proxy) == 0 &&
+      length(aws_api_gateway_method.admin) == 0 && length(aws_api_gateway_method.admin_proxy) == 0 &&
+      length(aws_api_gateway_integration.admin) == 0 && length(aws_api_gateway_integration.admin_proxy) == 0
+    )
+    error_message = "No decoy resources without enable_decoy_route."
+  }
+}
+
+run "decoy_route_inert_without_api" {
+  command = apply
+
+  variables {
+    enable_decoy_route = true
+  }
+
+  assert {
+    condition     = length(aws_api_gateway_resource.admin) == 0 && length(aws_api_gateway_method.admin_proxy) == 0
+    error_message = "The decoy route needs the API (enable_api)."
+  }
+}
+
+run "decoy_route_when_enabled" {
+  command = apply
+
+  variables {
+    enable_api            = true
+    enable_decoy_route    = true
+    nlb_arn               = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/cs-test-api-nlb/0123456789abcdef"
+    nlb_dns_name          = "cs-test-api-nlb-0123456789abcdef.elb.us-east-1.amazonaws.com"
+    cognito_user_pool_arn = "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_AbCdEfGhI"
+  }
+
+  assert {
+    condition = (
+      aws_api_gateway_resource.admin[0].path_part == "admin" &&
+      aws_api_gateway_resource.admin[0].parent_id == aws_api_gateway_resource.api[0].id &&
+      aws_api_gateway_resource.admin_proxy[0].path_part == "{proxy+}" &&
+      aws_api_gateway_resource.admin_proxy[0].parent_id == aws_api_gateway_resource.admin[0].id
+    )
+    error_message = "Decoy resources: /api/admin and /api/admin/{proxy+}."
+  }
+  assert {
+    condition = alltrue([
+      for m in [aws_api_gateway_method.admin[0], aws_api_gateway_method.admin_proxy[0]] :
+      m.authorization == "NONE" && m.http_method == "ANY"
+    ])
+    error_message = "Both decoy methods are ANY with authorization NONE (D14)."
+  }
+  assert {
+    condition     = aws_api_gateway_method.proxy[0].authorization == "COGNITO_USER_POOLS" && aws_api_gateway_method.proxy[0].authorizer_id == aws_api_gateway_authorizer.cognito[0].id
+    error_message = "ANY /api/{proxy+} still requires the Cognito authorizer."
+  }
+  assert {
+    condition = toset([
+      for m in [aws_api_gateway_method.healthz[0], aws_api_gateway_method.proxy[0], aws_api_gateway_method.admin[0], aws_api_gateway_method.admin_proxy[0]] :
+      "${m.resource_id}:${m.http_method}" if m.authorization == "NONE"
+      ]) == toset([
+      "${aws_api_gateway_resource.healthz[0].id}:GET",
+      "${aws_api_gateway_resource.admin[0].id}:ANY",
+      "${aws_api_gateway_resource.admin_proxy[0].id}:ANY",
+    ])
+    error_message = "Only GET /api/healthz and the two decoy methods are unauthenticated."
+  }
+  assert {
+    condition = (
+      aws_api_gateway_integration.admin[0].uri == "http://cs-test-api-nlb-0123456789abcdef.elb.us-east-1.amazonaws.com:80/admin" &&
+      aws_api_gateway_integration.admin_proxy[0].uri == "http://cs-test-api-nlb-0123456789abcdef.elb.us-east-1.amazonaws.com:80/admin/{proxy}"
+    )
+    error_message = "Decoy integrations target /admin and /admin/{proxy} on the NLB listener."
+  }
+  assert {
+    condition = alltrue([
+      for i in [aws_api_gateway_integration.admin[0], aws_api_gateway_integration.admin_proxy[0]] :
+      i.request_parameters["integration.request.header.x-origin-verify"] == "''" && i.type == "HTTP_PROXY" && i.connection_type == "VPC_LINK" && i.connection_id == aws_api_gateway_vpc_link.this[0].id
+    ])
+    error_message = "Decoy integrations go over the VPC Link and blank the origin secret."
+  }
+  assert {
+    condition     = aws_api_gateway_integration.admin_proxy[0].request_parameters["integration.request.path.proxy"] == "method.request.path.proxy" && aws_api_gateway_method.admin_proxy[0].request_parameters["method.request.path.proxy"]
+    error_message = "The {proxy+} path is passed through to the decoy."
+  }
+}

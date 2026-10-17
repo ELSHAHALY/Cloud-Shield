@@ -70,6 +70,10 @@ The router state contains the original EventBridge event (`detail`, `time`, …)
 
 `test_contract.py` asserts that each set equals what the code reads.
 
+## Notify-only edge types (Phase E)
+
+`EDGE_NOTIFY_ONLY_TYPES` (`core/finding.py`) lists edge findings SOAR records and notifies on but never contains: today only `CloudShield:IPAddress/DecoyRouteHit`, published by the docs-api decoy route. After the edge-source check the guard returns `allowed: false` with the reason `notify-only edge finding (decoy route hit): analyst review`; the router records `BLOCKED_BY_GUARD` and notifies. These types are never in `EDGE_FINDING_TYPES`, and PB-05 refuses them on its own (ADR-0005, Phase E amendment). docs-api triages from `app/docs-api/src/soc/attack-table.generated.json`, exported by `python -m tools.export_attack_table --out …`; CI runs `--check` so it cannot drift from `core/attack.py`.
+
 ## Safety guard rules (write these tests first; they are the R2 control)
 
 Evaluate **in this order**. The first matching rule decides.

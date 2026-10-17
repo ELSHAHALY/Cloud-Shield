@@ -8,8 +8,9 @@
 # committed seed secret would live in git history forever and trip gitleaks
 # on every future full-history scan).
 #
-# Usage:  scripts/gate-selftest.sh [secrets|sast|sca|iac|image|dast|all]
-# Needs:  gitleaks, semgrep, trivy, checkov (and docker for dast) on PATH.
+# Usage:  scripts/gate-selftest.sh [secrets|sast|sca|iac|dockerfile|image|dast|all]
+# Needs:  gitleaks, semgrep, trivy, checkov (and docker for dast; hadolint or
+#         docker for dockerfile) on PATH.
 # Exit:   0 = every selected gate tripped as expected; 1 = a gate let a seed
 #         through OR exited non-zero WITHOUT reporting the seeded finding
 #         (tool crash, DB download failure, unknown subcommand…) — a bare
@@ -102,6 +103,21 @@ resource "aws_security_group" "bad" {
 }
 HCL
   expect_trip iac 'CKV_AWS_24' checkov -d "$WORK/iac" --framework terraform --quiet --compact --check CKV_AWS_24
+fi
+
+# --- Gate 4b: Dockerfiles (Phase E) — a floating tag and a root user:
+# hadolint DL3007 (app job) and Checkov CKV_DOCKER_7 / CKV_DOCKER_8 (iac job).
+if want dockerfile; then
+  mkdir -p "$WORK/dockerfile"
+  printf 'FROM node:latest\nUSER root\nCMD ["node"]\n' >"$WORK/dockerfile/Dockerfile"
+  if command -v hadolint >/dev/null; then
+    expect_trip dockerfile-hadolint 'DL3007' hadolint --failure-threshold warning "$WORK/dockerfile/Dockerfile"
+  else
+    expect_trip dockerfile-hadolint 'DL3007' docker run --rm -i -v "$WORK/dockerfile:/w:ro" \
+      "${HADOLINT_IMAGE:-hadolint/hadolint:v2.14.0}" hadolint --failure-threshold warning /w/Dockerfile
+  fi
+  expect_trip dockerfile-checkov 'CKV_DOCKER_7|CKV_DOCKER_8' checkov -d "$WORK/dockerfile" --framework dockerfile \
+    --quiet --compact --check CKV_DOCKER_7,CKV_DOCKER_8
 fi
 
 # --- Gate 5: image — end-of-life base image with fixable CRITICAL/HIGH CVEs.

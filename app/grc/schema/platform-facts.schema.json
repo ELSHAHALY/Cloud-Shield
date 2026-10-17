@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloudshield.local/grc/platform-facts.schema.json",
+  "title": "Platform facts (static part)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reviewedAgainst",
+    "lastReviewed",
+    "facts"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "reviewedAgainst": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "lastReviewed": {
+      "type": "string",
+      "format": "date"
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "encryptionAtRest",
+        "mfa",
+        "auditTrail",
+        "mttcTargetSeconds",
+        "erasureCompletesWithinDays",
+        "transitInternalHop",
+        "evidenceObjectLock",
+        "wafEnabled",
+        "malwareScanning",
+        "breachNotificationTooling",
+        "backupPitr"
+      ],
+      "properties": {
+        "provider": {
+          "const": "aws"
+        },
+        "encryptionAtRest": {
+          "enum": [
+            "kms-cmk",
+            "provider-managed"
+          ]
+        },
+        "mfa": {
+          "enum": [
+            "totp-required",
+            "optional",
+            "none"
+          ]
+        },
+        "auditTrail": {
+          "const": "insert-only-by-convention"
+        },
+        "mttcTargetSeconds": {
+          "type": "number",
+          "minimum": 1
+        },
+        "erasureCompletesWithinDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transitInternalHop": {
+          "enum": [
+            "http-over-privatelink",
+            "tls"
+          ]
+        },
+        "evidenceObjectLock": {
+          "enum": [
+            "off-by-default",
+            "governance",
+            "compliance"
+          ]
+        },
+        "wafEnabled": {
+          "type": "boolean"
+        },
+        "malwareScanning": {
+          "type": "boolean"
+        },
+        "breachNotificationTooling": {
+          "enum": [
+            "sns-chatops",
+            "none"
+          ]
+        },
+        "backupPitr": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

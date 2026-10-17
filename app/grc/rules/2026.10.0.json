@@ -1,0 +1,1508 @@
+{
+  "schemaVersion": "1",
+  "rulesetId": "cloudshield-grc",
+  "version": "2026.10.0",
+  "lastReviewed": "2026-10-16",
+  "disclaimer": "Informational mapping prepared for an academic capstone (CloudShield). It is not legal advice and does not establish compliance. Items marked \"verify\" have not been checked against the official text; confirm every obligation with qualified counsel and the regulator's own publications before relying on it. Last reviewed 2026-10-16.",
+  "jurisdictions": [
+    {
+      "id": "EG",
+      "name": "Egypt",
+      "frameworks": [
+        "EG-PDPL",
+        "EG-CBE"
+      ]
+    },
+    {
+      "id": "EU",
+      "name": "European Union",
+      "frameworks": [
+        "EU-GDPR"
+      ]
+    },
+    {
+      "id": "SA",
+      "name": "Saudi Arabia",
+      "frameworks": [
+        "SA-PDPL",
+        "SA-NCA"
+      ]
+    }
+  ],
+  "regionCountry": {
+    "us-east-1": "US",
+    "us-east-2": "US",
+    "us-west-2": "US",
+    "eu-central-1": "EU",
+    "eu-west-1": "EU",
+    "eu-west-3": "EU",
+    "eu-south-1": "EU",
+    "eu-north-1": "EU",
+    "me-central-1": "AE",
+    "me-south-1": "BH",
+    "il-central-1": "IL",
+    "af-south-1": "ZA"
+  },
+  "frameworks": [
+    {
+      "id": "EG-PDPL",
+      "title": "Egypt Personal Data Protection Law",
+      "citation": "Law No. 151 of 2020",
+      "regulator": "Personal Data Protection Center",
+      "citationStatus": "doc",
+      "notes": "The law's identity is checked; article-level content and the Executive Regulations are marked verify."
+    },
+    {
+      "id": "EG-CBE",
+      "title": "Central Bank of Egypt cloud, outsourcing and cybersecurity rules",
+      "citation": "CBE instruments to be identified from CBE publications",
+      "regulator": "Central Bank of Egypt",
+      "citationStatus": "verify",
+      "notes": "Instrument names, dates and article numbers are not established here."
+    },
+    {
+      "id": "EU-GDPR",
+      "title": "General Data Protection Regulation",
+      "citation": "Regulation (EU) 2016/679",
+      "regulator": "EU/EEA supervisory authorities",
+      "citationStatus": "doc"
+    },
+    {
+      "id": "SA-PDPL",
+      "title": "Saudi Personal Data Protection Law",
+      "citation": "Royal Decree No. M/19 (1443H)",
+      "regulator": "Saudi Data & AI Authority (SDAIA)",
+      "citationStatus": "doc",
+      "notes": "The decree is checked; amendments, dates, transfer and breach rules are marked verify."
+    },
+    {
+      "id": "SA-NCA",
+      "title": "NCA Essential and Cloud Cybersecurity Controls",
+      "citation": "ECC-2:2024; CCC",
+      "regulator": "National Cybersecurity Authority",
+      "citationStatus": "verify"
+    }
+  ],
+  "rules": [
+    {
+      "id": "EG-PDPL-SCOPE-CBE",
+      "framework": "EG-PDPL",
+      "topic": "scope",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.cbeRegulated",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Personal data held by the Central Bank of Egypt and by entities under its supervision is largely excluded from the PDPL; the banking laws and CBE rules apply instead.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "Art. 3",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "info"
+      },
+      "controls": [],
+      "rationale": {
+        "INFO": "The tenant is CBE-regulated: review the CBE rules (EG-CBE) first; PDPL obligations may apply only in part.",
+        "NOT_APPLICABLE": "Not CBE-regulated."
+      }
+    },
+    {
+      "id": "EG-PDPL-LAWFUL-BASIS-CONSENT",
+      "framework": "EG-PDPL",
+      "topic": "lawful-basis",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Process personal data only with the data subject's consent or another basis the law allows, for a specific and legitimate purpose.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "Art. 6",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "The lawful basis is the controller's (tenant's) decision; CloudShield processes documents on the tenant's instructions."
+      }
+    },
+    {
+      "id": "EG-PDPL-BREACH-NOTICE",
+      "framework": "EG-PDPL",
+      "topic": "breach-notification",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Notify the Personal Data Protection Center of a personal data breach within 72 hours, and the affected data subjects within a short period after.",
+      "parameters": {
+        "deadlineHours": 72
+      },
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "Art. 7",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.breachNotificationTooling",
+              "op": "eq",
+              "value": "sns-chatops"
+            },
+            {
+              "fact": "platform.incidentAutomation",
+              "op": "eq",
+              "value": "enabled"
+            }
+          ]
+        },
+        "partialWhen": {
+          "fact": "platform.breachNotificationTooling",
+          "op": "eq",
+          "value": "sns-chatops"
+        }
+      },
+      "controls": [
+        "soar.mttc",
+        "soar.ir-report",
+        "chatops.notify"
+      ],
+      "rationale": {
+        "MET": "Detection, automated containment (MTTC target 60 s), SNS/ChatOps alerting and IR reports give the evidence needed for the notice. Sending the notice to the authority remains the controller's act.",
+        "PARTIAL": "Alerting and IR reports exist, but automated containment is in dry-run or disabled: incident timelines depend on analysts. Sending the notice remains the controller's act.",
+        "GAP": "No breach alerting path is configured."
+      }
+    },
+    {
+      "id": "EG-PDPL-DPO",
+      "framework": "EG-PDPL",
+      "topic": "dpo",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Appoint a data protection officer where the law requires it and register them with the Center.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "Art. 8–9",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Appointing and registering a DPO is the controller's duty."
+      }
+    },
+    {
+      "id": "EG-PDPL-CROSS-BORDER",
+      "framework": "EG-PDPL",
+      "topic": "cross-border",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Transfer personal data outside Egypt only to a destination with an adequate level of protection, and with a licence or permit from the Center.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "Art. 14–15",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "fact": "derived.crossBorder",
+          "op": "eq",
+          "value": false
+        }
+      },
+      "controls": [
+        "platform.region"
+      ],
+      "rationale": {
+        "MET": "Hosted in Egypt.",
+        "GAP": "Data is hosted in {deploymentRegions} ({deploymentCountries}): every request is a transfer outside Egypt. Multi-region deployment is out of the capstone scope."
+      }
+    },
+    {
+      "id": "EG-PDPL-LICENSING",
+      "framework": "EG-PDPL",
+      "topic": "licensing",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Controllers and processors obtain the licence or permit the Center issues before processing.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "licensing provisions",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Both the tenant (controller) and the operator (processor) need the Center's licence or permit; status not tracked by CloudShield."
+      }
+    },
+    {
+      "id": "EG-PDPL-SENSITIVE-DATA",
+      "framework": "EG-PDPL",
+      "topic": "sensitive-data",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesSensitiveData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Sensitive data (including financial, health and children's data) needs explicit written consent and the Center's licence.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "sensitive data provisions",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [
+        "data.classification"
+      ],
+      "rationale": {
+        "CUSTOMER_ACTION": "Classify such documents as restricted and record the explicit consent outside CloudShield."
+      }
+    },
+    {
+      "id": "EG-PDPL-EXEC-REGS",
+      "framework": "EG-PDPL",
+      "topic": "executive-regulations",
+      "appliesWhen": {
+        "fact": "tenant.jurisdictions",
+        "op": "includes",
+        "value": "EG"
+      },
+      "obligation": "Check whether the Executive Regulations are in force and when the compliance grace period ends.",
+      "citations": [
+        {
+          "source": "Executive Regulations of Law No. 151 of 2020",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "info"
+      },
+      "controls": [],
+      "rationale": {
+        "INFO": "Status and dates are not established here: verify against the official gazette."
+      }
+    },
+    {
+      "id": "EG-PDPL-RETENTION",
+      "framework": "EG-PDPL",
+      "topic": "retention",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Keep personal data no longer than the purpose requires, then erase it.",
+      "citations": [
+        {
+          "source": "Egypt Personal Data Protection Law, Law No. 151 of 2020",
+          "article": "data subject rights / retention",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "fact": "platform.erasureCompletesWithinDays",
+          "op": "lte",
+          "value": 30
+        }
+      },
+      "controls": [
+        "docs.tombstone",
+        "s3.noncurrent-expiry"
+      ],
+      "rationale": {
+        "MET": "Deleting a document tombstones it at once; its S3 versions expire within 30 days. Choosing retention periods is the controller's decision.",
+        "GAP": "Deleted content is not erased within 30 days."
+      }
+    },
+    {
+      "id": "EG-CBE-CLOUD-OUTSOURCING-APPROVAL",
+      "framework": "EG-CBE",
+      "topic": "outsourcing",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.cbeRegulated",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Material cloud outsourcing by a CBE-regulated entity needs prior CBE approval or notification.",
+      "citations": [
+        {
+          "source": "CBE cloud/outsourcing instrument (to be identified from CBE publications)",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Obtain the CBE approval or make the notification before onboarding production data."
+      }
+    },
+    {
+      "id": "EG-CBE-DATA-LOCATION-ACCESS",
+      "framework": "EG-CBE",
+      "topic": "data-location",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.cbeRegulated",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Keep regulated data where the CBE rules allow and guarantee the regulator's access to it.",
+      "citations": [
+        {
+          "source": "CBE cloud/outsourcing instrument (to be identified from CBE publications)",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "residency",
+        "country": "EG"
+      },
+      "controls": [
+        "platform.region"
+      ],
+      "rationale": {
+        "MET": "Hosted in Egypt.",
+        "GAP": "Deployed in {deploymentRegions} ({deploymentCountries}); residency in {country} not met — multi-region deployment is out of the capstone scope."
+      }
+    },
+    {
+      "id": "EG-CBE-CYBER-FRAMEWORK-INCIDENT",
+      "framework": "EG-CBE",
+      "topic": "incident-reporting",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.cbeRegulated",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Report cybersecurity incidents to the CBE within the deadlines of its cybersecurity framework.",
+      "citations": [
+        {
+          "source": "CBE cybersecurity framework (to be identified from CBE publications)",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.breachNotificationTooling",
+              "op": "eq",
+              "value": "sns-chatops"
+            },
+            {
+              "fact": "platform.incidentAutomation",
+              "op": "eq",
+              "value": "enabled"
+            }
+          ]
+        },
+        "partialWhen": {
+          "fact": "platform.breachNotificationTooling",
+          "op": "eq",
+          "value": "sns-chatops"
+        }
+      },
+      "controls": [
+        "soar.mttc",
+        "soar.ir-report",
+        "chatops.notify"
+      ],
+      "rationale": {
+        "MET": "Detection, automated containment (MTTC target 60 s), SNS/ChatOps alerting and IR reports give the evidence needed for the notice. Sending the notice to the authority remains the controller's act.",
+        "PARTIAL": "Alerting and IR reports exist, but automated containment is in dry-run or disabled: incident timelines depend on analysts. Sending the notice remains the controller's act.",
+        "GAP": "No breach alerting path is configured."
+      }
+    },
+    {
+      "id": "EG-CBE-BANKING-SECRECY",
+      "framework": "EG-CBE",
+      "topic": "banking-secrecy",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EG"
+          },
+          {
+            "fact": "tenant.cbeRegulated",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Customer account data is subject to banking secrecy.",
+      "citations": [
+        {
+          "source": "Banking Law No. 194 of 2020",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [
+        "data.classification",
+        "tenant.isolation"
+      ],
+      "rationale": {
+        "CUSTOMER_ACTION": "Classify account data as restricted; CloudShield isolates tenants by partition key (not cryptographically, ADR-0002 §5)."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART5-STORAGE-LIMITATION",
+      "framework": "EU-GDPR",
+      "topic": "storage-limitation",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Keep personal data in identifiable form no longer than necessary for the purposes of processing.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 5(1)(e)",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [
+        "docs.tombstone"
+      ],
+      "rationale": {
+        "CUSTOMER_ACTION": "Retention periods are the controller's decision; deletion is available per document."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART6-LAWFUL-BASIS",
+      "framework": "EU-GDPR",
+      "topic": "lawful-basis",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Process personal data only on one of the lawful bases of Art. 6(1).",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 6",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "The lawful basis is the controller's decision."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART7-CONSENT",
+      "framework": "EU-GDPR",
+      "topic": "consent",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Where processing relies on consent, be able to demonstrate it and let the data subject withdraw it as easily as it was given.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 7",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Consent records are kept by the controller, outside CloudShield."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART17-ERASURE",
+      "framework": "EU-GDPR",
+      "topic": "erasure",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Erase personal data without undue delay when an Art. 17 ground applies (answer within one month, Art. 12(3)).",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 17",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        },
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 12(3)",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "fact": "platform.erasureCompletesWithinDays",
+          "op": "lte",
+          "value": 30
+        }
+      },
+      "controls": [
+        "docs.tombstone",
+        "s3.noncurrent-expiry"
+      ],
+      "rationale": {
+        "MET": "Delete tombstones the document at once (metadata cleared) and places an S3 delete marker; non-current versions expire after 30 days, inside the one-month answer period. Backups (PITR, 35 days) are the residual.",
+        "GAP": "Erasure takes longer than 30 days."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART25-BY-DESIGN",
+      "framework": "EU-GDPR",
+      "topic": "privacy-by-design",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Implement appropriate technical and organisational measures by design and by default.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 25",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.encryptionAtRest",
+              "op": "eq",
+              "value": "kms-cmk"
+            },
+            {
+              "fact": "platform.mfa",
+              "op": "eq",
+              "value": "totp-required"
+            }
+          ]
+        }
+      },
+      "controls": [
+        "kms.cmk",
+        "cognito.mfa",
+        "tenant.isolation"
+      ],
+      "rationale": {
+        "MET": "Customer-managed KMS keys, mandatory TOTP MFA, deny-by-default RBAC and per-tenant partitioning.",
+        "GAP": "Encryption or MFA defaults are weaker than required."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART28-PROCESSOR-CONTRACT",
+      "framework": "EU-GDPR",
+      "topic": "processor-contract",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Processing by a processor is governed by a contract with the Art. 28(3) content; it may be in electronic form (Art. 28(9)).",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 28(3)",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        },
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 28(9)",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [
+        "agreements.dpa"
+      ],
+      "rationale": {
+        "CUSTOMER_ACTION": "Accept the DPA in onboarding: CloudShield records click-through acceptance by an MFA-authenticated admin. The DPA is a template that counsel has not reviewed."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART30-RECORDS",
+      "framework": "EU-GDPR",
+      "topic": "records-of-processing",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Maintain a record of processing activities.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 30",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [
+        "audit.insert-only"
+      ],
+      "rationale": {
+        "CUSTOMER_ACTION": "The record of processing is the controller's; the tenant audit trail (insert-only by convention) supports it."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART32-SECURITY",
+      "framework": "EU-GDPR",
+      "topic": "security",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Implement security appropriate to the risk: encryption, confidentiality, integrity, availability, resilience and regular testing.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 32",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.encryptionAtRest",
+              "op": "eq",
+              "value": "kms-cmk"
+            },
+            {
+              "fact": "platform.mfa",
+              "op": "eq",
+              "value": "totp-required"
+            },
+            {
+              "fact": "platform.wafEnabled",
+              "op": "eq",
+              "value": true
+            },
+            {
+              "fact": "platform.transitInternalHop",
+              "op": "eq",
+              "value": "tls"
+            }
+          ]
+        },
+        "partialWhen": {
+          "all": [
+            {
+              "fact": "platform.encryptionAtRest",
+              "op": "eq",
+              "value": "kms-cmk"
+            },
+            {
+              "fact": "platform.mfa",
+              "op": "eq",
+              "value": "totp-required"
+            }
+          ]
+        }
+      },
+      "controls": [
+        "kms.cmk",
+        "cognito.mfa",
+        "waf.edge",
+        "soar.mttc",
+        "ci.gates"
+      ],
+      "rationale": {
+        "MET": "Encryption at rest with CMKs, MFA, edge WAF, automated containment and TLS end to end.",
+        "PARTIAL": "Encryption at rest (CMK), MFA, WAF and automated containment are in place, but the last internal hop (NLB → task inside the VPC, over PrivateLink) is plain HTTP, and Object Lock on evidence is off by default.",
+        "GAP": "Core measures are missing."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART33-BREACH-72H",
+      "framework": "EU-GDPR",
+      "topic": "breach-notification",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Notify the supervisory authority without undue delay and, where feasible, within 72 hours of becoming aware of a personal data breach.",
+      "parameters": {
+        "deadlineHours": 72
+      },
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 33",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.breachNotificationTooling",
+              "op": "eq",
+              "value": "sns-chatops"
+            },
+            {
+              "fact": "platform.incidentAutomation",
+              "op": "eq",
+              "value": "enabled"
+            }
+          ]
+        },
+        "partialWhen": {
+          "fact": "platform.breachNotificationTooling",
+          "op": "eq",
+          "value": "sns-chatops"
+        }
+      },
+      "controls": [
+        "soar.mttc",
+        "soar.ir-report",
+        "chatops.notify"
+      ],
+      "rationale": {
+        "MET": "Detection, automated containment (MTTC target 60 s), SNS/ChatOps alerting and IR reports give the evidence needed for the notice. Sending the notice to the authority remains the controller's act.",
+        "PARTIAL": "Alerting and IR reports exist, but automated containment is in dry-run or disabled: incident timelines depend on analysts. Sending the notice remains the controller's act.",
+        "GAP": "No breach alerting path is configured."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART34-DATA-SUBJECTS",
+      "framework": "EU-GDPR",
+      "topic": "breach-communication",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Communicate a high-risk breach to the data subjects without undue delay.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 34",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Communicating to data subjects is the controller's act."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART37-DPO",
+      "framework": "EU-GDPR",
+      "topic": "dpo",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Designate a DPO where Art. 37(1) applies.",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 37",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Designating a DPO is the controller's duty."
+      }
+    },
+    {
+      "id": "EU-GDPR-ART44-46-TRANSFERS",
+      "framework": "EU-GDPR",
+      "topic": "cross-border",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "EU"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "A transfer to a third country needs an adequacy decision (Art. 45) or appropriate safeguards such as standard contractual clauses (Art. 46).",
+      "citations": [
+        {
+          "source": "Regulation (EU) 2016/679 (GDPR)",
+          "article": "Art. 44–46",
+          "status": "doc",
+          "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+        },
+        {
+          "source": "Commission Implementing Decision (EU) 2021/914 (standard contractual clauses)",
+          "status": "doc"
+        },
+        {
+          "source": "Commission adequacy decision for the EU–US Data Privacy Framework, 10 July 2023",
+          "status": "doc"
+        },
+        {
+          "source": "Whether AWS participates in the EU–US Data Privacy Framework",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "fact": "derived.crossBorder",
+          "op": "eq",
+          "value": false
+        }
+      },
+      "controls": [
+        "platform.region",
+        "agreements.dpa"
+      ],
+      "rationale": {
+        "MET": "Hosted in the EU/EEA.",
+        "GAP": "Hosted in {deploymentRegions} ({deploymentCountries}): an Art. 44 transfer. Rely on the DPF adequacy decision if the importer is certified (verify), or on SCCs (2021/914) with a transfer impact assessment."
+      }
+    },
+    {
+      "id": "SA-PDPL-AMENDMENTS-EFFECTIVE",
+      "framework": "SA-PDPL",
+      "topic": "effective-date",
+      "appliesWhen": {
+        "fact": "tenant.jurisdictions",
+        "op": "includes",
+        "value": "SA"
+      },
+      "obligation": "The PDPL as amended by Royal Decree M/148 (1444H) entered into force on 14 September 2023, with a grace period to 14 September 2024.",
+      "citations": [
+        {
+          "source": "Saudi Personal Data Protection Law, Royal Decree No. M/19 (1443H)",
+          "article": "amendment by Royal Decree M/148 (1444H)",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "info"
+      },
+      "controls": [],
+      "rationale": {
+        "INFO": "Dates and amendment details are to be verified against SDAIA's official publication."
+      }
+    },
+    {
+      "id": "SA-PDPL-BREACH-72H",
+      "framework": "SA-PDPL",
+      "topic": "breach-notification",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Notify SDAIA of a personal data breach within 72 hours of becoming aware of it (Implementing Regulation).",
+      "parameters": {
+        "deadlineHours": 72
+      },
+      "citations": [
+        {
+          "source": "PDPL Implementing Regulation",
+          "article": "breach notification",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.breachNotificationTooling",
+              "op": "eq",
+              "value": "sns-chatops"
+            },
+            {
+              "fact": "platform.incidentAutomation",
+              "op": "eq",
+              "value": "enabled"
+            }
+          ]
+        },
+        "partialWhen": {
+          "fact": "platform.breachNotificationTooling",
+          "op": "eq",
+          "value": "sns-chatops"
+        }
+      },
+      "controls": [
+        "soar.mttc",
+        "soar.ir-report",
+        "chatops.notify"
+      ],
+      "rationale": {
+        "MET": "Detection, automated containment (MTTC target 60 s), SNS/ChatOps alerting and IR reports give the evidence needed for the notice. Sending the notice to the authority remains the controller's act.",
+        "PARTIAL": "Alerting and IR reports exist, but automated containment is in dry-run or disabled: incident timelines depend on analysts. Sending the notice remains the controller's act.",
+        "GAP": "No breach alerting path is configured."
+      }
+    },
+    {
+      "id": "SA-PDPL-CROSS-BORDER",
+      "framework": "SA-PDPL",
+      "topic": "cross-border",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Transfer personal data outside the Kingdom only under an adequacy decision or appropriate safeguards, after a risk assessment.",
+      "citations": [
+        {
+          "source": "Saudi Personal Data Protection Law, Royal Decree No. M/19 (1443H)",
+          "article": "Art. 29",
+          "status": "verify"
+        },
+        {
+          "source": "Regulation on Personal Data Transfer outside the Kingdom",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "fact": "derived.crossBorder",
+          "op": "eq",
+          "value": false
+        }
+      },
+      "controls": [
+        "platform.region"
+      ],
+      "rationale": {
+        "MET": "Hosted in the Kingdom.",
+        "GAP": "Data is hosted in {deploymentRegions} ({deploymentCountries}): every request is a transfer outside the Kingdom. Multi-region deployment is out of the capstone scope."
+      }
+    },
+    {
+      "id": "SA-PDPL-DPO",
+      "framework": "SA-PDPL",
+      "topic": "dpo",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "fact": "tenant.processesPersonalData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Appoint a personal data protection officer where the Implementing Regulation requires it.",
+      "citations": [
+        {
+          "source": "PDPL Implementing Regulation",
+          "article": "DPO",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "customer-action"
+      },
+      "controls": [],
+      "rationale": {
+        "CUSTOMER_ACTION": "Appointing a DPO is the controller's duty."
+      }
+    },
+    {
+      "id": "SA-NCA-ECC",
+      "framework": "SA-NCA",
+      "topic": "essential-controls",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "any": [
+              {
+                "fact": "tenant.governmentData",
+                "op": "eq",
+                "value": true
+              },
+              {
+                "fact": "tenant.sector",
+                "op": "in",
+                "value": [
+                  "government",
+                  "critical-infrastructure"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "obligation": "Government bodies and critical national infrastructure apply the NCA Essential Cybersecurity Controls (ECC-2:2024): IAM, cryptography, logging and monitoring, incident management, third-party and cloud.",
+      "citations": [
+        {
+          "source": "NCA Essential Cybersecurity Controls, ECC-2:2024",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "platform-control",
+        "metWhen": {
+          "all": [
+            {
+              "fact": "platform.mfa",
+              "op": "eq",
+              "value": "totp-required"
+            },
+            {
+              "fact": "platform.encryptionAtRest",
+              "op": "eq",
+              "value": "kms-cmk"
+            },
+            {
+              "fact": "platform.evidenceObjectLock",
+              "op": "in",
+              "value": [
+                "governance",
+                "compliance"
+              ]
+            },
+            {
+              "fact": "platform.incidentAutomation",
+              "op": "eq",
+              "value": "enabled"
+            }
+          ]
+        },
+        "partialWhen": {
+          "all": [
+            {
+              "fact": "platform.mfa",
+              "op": "eq",
+              "value": "totp-required"
+            },
+            {
+              "fact": "platform.encryptionAtRest",
+              "op": "eq",
+              "value": "kms-cmk"
+            }
+          ]
+        }
+      },
+      "controls": [
+        "cognito.mfa",
+        "kms.cmk",
+        "cloudtrail",
+        "soar.mttc",
+        "evidence.object-lock"
+      ],
+      "rationale": {
+        "MET": "MFA, CMK encryption, central logging, automated incident handling and WORM evidence are in place.",
+        "PARTIAL": "MFA, CMK encryption and incident automation are in place; Object Lock on evidence is off by default (evidence_object_lock_days = 0) and a control-by-control ECC review has not been done.",
+        "GAP": "Core ECC domains are not covered."
+      }
+    },
+    {
+      "id": "SA-NCA-CCC-DATA-HOSTING",
+      "framework": "SA-NCA",
+      "topic": "data-hosting",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "any": [
+              {
+                "fact": "tenant.governmentData",
+                "op": "eq",
+                "value": true
+              },
+              {
+                "fact": "tenant.sector",
+                "op": "in",
+                "value": [
+                  "government",
+                  "critical-infrastructure"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "obligation": "The Cloud Cybersecurity Controls (CCC) restrict where data may be hosted, by data classification.",
+      "citations": [
+        {
+          "source": "NCA Cloud Cybersecurity Controls (CCC)",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "residency",
+        "country": "SA"
+      },
+      "controls": [
+        "platform.region"
+      ],
+      "rationale": {
+        "MET": "Hosted in the Kingdom.",
+        "GAP": "Deployed in {deploymentRegions} ({deploymentCountries}); residency in {country} not met — multi-region deployment is out of the capstone scope."
+      }
+    },
+    {
+      "id": "SA-NCA-GOV-DATA-RESIDENCY",
+      "framework": "SA-NCA",
+      "topic": "government-data",
+      "appliesWhen": {
+        "all": [
+          {
+            "fact": "tenant.jurisdictions",
+            "op": "includes",
+            "value": "SA"
+          },
+          {
+            "fact": "tenant.governmentData",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "obligation": "Government data is hosted inside the Kingdom (NDMO data management policies, Cloud First policy).",
+      "citations": [
+        {
+          "source": "NDMO data management and personal data protection standards",
+          "status": "verify"
+        },
+        {
+          "source": "KSA Cloud First Policy",
+          "status": "verify"
+        }
+      ],
+      "assessment": {
+        "type": "residency",
+        "country": "SA"
+      },
+      "controls": [
+        "platform.region"
+      ],
+      "rationale": {
+        "MET": "Hosted in the Kingdom.",
+        "GAP": "Deployed in {deploymentRegions} ({deploymentCountries}); residency in {country} not met — multi-region deployment is out of the capstone scope."
+      }
+    }
+  ]
+}
