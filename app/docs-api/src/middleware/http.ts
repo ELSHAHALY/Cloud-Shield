@@ -65,24 +65,26 @@ export function rateLimit(limiter: RateLimiter, key: (req: Request) => string): 
 
 /**
  * D5/D22: verify the bearer ID token, then build the frozen Principal. Failed
- * attempts count toward the per-IP pre-auth limiter; past it, 429 before any
- * verification work is done.
+ * attempts from a trusted viewer IP count toward the per-IP pre-auth limiter;
+ * past it, 429 before any verification work is done.
  */
 export function authenticate(verifier: TokenVerifier, preAuth: RateLimiter): RequestHandler {
   return async (req, _res, next) => {
-    const ipKey = req.source.ip ?? "unknown";
-    const retry = preAuth.blocked(ipKey);
+    // Only a trusted viewer IP is limited: one shared "unknown" bucket would
+    // let anyone without a viewer address lock out every such user (audit E3).
+    const ipKey = req.source.trusted ? req.source.ip : null;
+    const retry = ipKey ? preAuth.blocked(ipKey) : 0;
     if (retry > 0) throw new AppError("RATE_LIMITED", undefined, undefined, retry);
     const token = bearer(req.get("authorization"));
     if (!token) {
-      preAuth.take(ipKey);
+      if (ipKey) preAuth.take(ipKey);
       throw new AppError("UNAUTHENTICATED");
     }
     let claims;
     try {
       claims = await verifier.verify(token);
     } catch {
-      preAuth.take(ipKey);
+      if (ipKey) preAuth.take(ipKey);
       throw new AppError("UNAUTHENTICATED");
     }
     req.principal = toPrincipal(claims);

@@ -147,6 +147,11 @@ export class AuditLog {
    */
   async query(partition: TenantId, from: string, to: string, limit: number, cursor?: string) {
     const start = decodeCursor(cursor, { k: EVENT_KEY_RE });
+    // An out-of-window cursor would be a DynamoDB ValidationException (500): refuse it (audit E10).
+    const k = start?.k;
+    if (k !== undefined && (k < from || k > `${to}~`)) {
+      throw new AppError("VALIDATION_FAILED", "cursor outside the time window", [{ path: "/query/cursor", message: "cursor outside the time window" }]);
+    }
     const out = await this.ddb.send(
       new QueryCommand({
         TableName: this.table,
@@ -164,18 +169,27 @@ export class AuditLog {
 
   /** Decoy correlation: `_platform` events in one hour naming this incident id. */
   async relatedToIncident(incidentId: string, hourStart: string, hourEnd: string) {
-    const out = await this.ddb.send(
-      new QueryCommand({
-        TableName: this.table,
-        KeyConditionExpression: "tenantId = :t AND eventKey BETWEEN :from AND :to",
-        FilterExpression: "#d.#i = :id",
-        ExpressionAttributeNames: { "#d": "details", "#i": "incidentId" },
-        ExpressionAttributeValues: { ":t": PLATFORM_PARTITION, ":from": hourStart, ":to": `${hourEnd}~`, ":id": incidentId },
-        ScanIndexForward: false,
-        Limit: 100,
-      }),
-    );
-    return (out.Items ?? []).slice(0, 20).map(toPublicEvent);
+    // Limit applies before the filter: page (bounded) until 20 matches (audit E12).
+    const found: Record<string, unknown>[] = [];
+    let start: Record<string, unknown> | undefined;
+    for (let page = 0; page < 5 && found.length < 20; page++) {
+      const out = await this.ddb.send(
+        new QueryCommand({
+          TableName: this.table,
+          KeyConditionExpression: "tenantId = :t AND eventKey BETWEEN :from AND :to",
+          FilterExpression: "#d.#i = :id",
+          ExpressionAttributeNames: { "#d": "details", "#i": "incidentId" },
+          ExpressionAttributeValues: { ":t": PLATFORM_PARTITION, ":from": hourStart, ":to": `${hourEnd}~`, ":id": incidentId },
+          ScanIndexForward: false,
+          Limit: 200,
+          ...(start ? { ExclusiveStartKey: start } : {}),
+        }),
+      );
+      found.push(...(out.Items ?? []));
+      start = out.LastEvaluatedKey;
+      if (!start) break;
+    }
+    return found.slice(0, 20).map(toPublicEvent);
   }
 }
 

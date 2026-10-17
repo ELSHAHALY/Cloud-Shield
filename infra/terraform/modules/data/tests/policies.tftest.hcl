@@ -93,8 +93,8 @@ run "app_document_objects_only_under_tenants" {
       ]).Resource == "arn:aws:s3:::cs-test-documents-123456789012/tenants/*" && jsonencode(sort(flatten([one([
         for s in jsondecode(data.aws_iam_policy_document.app.json).Statement : s
         if s.Sid == "DocumentObjects"
-    ]).Action]))) == jsonencode(["s3:DeleteObject", "s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"])
-    error_message = "Document objects: exactly Get/GetVersion/Put/DeleteObject, only under tenants/* (Phase E F6, D8)."
+    ]).Action]))) == jsonencode(["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"])
+    error_message = "Document objects: exactly Get/GetVersion/Put/Delete/DeleteVersion, only under tenants/* (Phase E F6, D8, audit E2)."
   }
   assert {
     condition = alltrue(flatten([

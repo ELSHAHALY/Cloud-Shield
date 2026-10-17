@@ -117,11 +117,16 @@ export async function bucketLock(s3: S3Client, evidenceBucket: string): Promise<
   }
 }
 
-/** Same semantics as IrReport.chain_of_custody_ok, plus: a truncated check never claims "intact". */
+/**
+ * Same semantics as IrReport.chain_of_custody_ok, plus: a check that could not
+ * verify everything (truncated at 20 objects, or an object over 5 MiB that
+ * was not hashed) never claims "intact" and never claims "BROKEN" either
+ * (audit E6): it is null, "not fully verified".
+ */
 export function chainOfCustody(checks: EvidenceCheck[], truncated: boolean): boolean | null {
   if (checks.length === 0) return null;
-  if (checks.some((c) => !c.ok)) return false;
-  return truncated ? null : true;
+  if (checks.some((c) => !c.ok && c.error !== "too-large")) return false;
+  return truncated || checks.some((c) => c.error === "too-large") ? null : true;
 }
 
 export async function verifyAll(s3: S3Client, evidenceBucket: string, records: EvidenceRecord[]) {

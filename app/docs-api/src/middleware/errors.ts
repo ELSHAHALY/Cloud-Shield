@@ -6,7 +6,7 @@ import { RateLimiter } from "../lib/rate-limit";
 
 interface ValidatorError {
   status: number;
-  errors: { path?: unknown; message?: unknown }[];
+  errors: { path?: unknown; message?: unknown; errorCode?: unknown }[];
   path?: unknown;
 }
 
@@ -23,6 +23,39 @@ function isValidatorError(err: unknown): err is ValidatorError {
 function bodyParserType(err: unknown): string | undefined {
   const t = (err as { type?: unknown } | null)?.type;
   return typeof t === "string" ? t : undefined;
+}
+
+/**
+ * Fixed text per JSON-Schema keyword: validator messages can echo request
+ * input (parameter names, media types), which §3.2 forbids (audit E9).
+ */
+const KEYWORD_MESSAGES: Readonly<Record<string, string>> = {
+  additionalProperties: "unexpected property",
+  required: "missing required property",
+  type: "wrong type",
+  enum: "not an allowed value",
+  const: "not the expected value",
+  format: "invalid format",
+  pattern: "invalid format",
+  maxLength: "too long",
+  minLength: "too short",
+  maximum: "too large",
+  minimum: "too small",
+  maxItems: "too many items",
+  minItems: "too few items",
+  uniqueItems: "duplicate items",
+  minProperties: "empty object",
+  maxProperties: "too many properties",
+};
+// eslint-disable-next-line security/detect-unsafe-regex -- bounded repetition, disjoint segments: linear time
+const SAFE_PATH_RE = /^\/(?:body|query|params|path|headers)(?:\/[A-Za-z0-9_.~-]{1,64}){0,8}$/;
+
+export function safeFieldError(e: { path?: unknown; message?: unknown; errorCode?: unknown }): FieldError {
+  const keyword = typeof e.errorCode === "string" ? e.errorCode.split(".")[0] ?? "" : "";
+  const message = Object.prototype.hasOwnProperty.call(KEYWORD_MESSAGES, keyword) ? KEYWORD_MESSAGES[keyword]! : "invalid request";
+  const raw = typeof e.path === "string" ? e.path : "";
+  const path = SAFE_PATH_RE.test(raw) ? raw : (/^\/(body|query|params|path|headers)\b/.exec(raw)?.[0] ?? "/");
+  return { path, message };
 }
 
 const VALIDATOR_CODES: Readonly<Record<number, ProblemCode>> = {
@@ -50,7 +83,7 @@ export function errorHandler(logger: Logger, audit: AuditLog) {
       retryAfter = err.retryAfterSeconds;
     } else if (isValidatorError(err) && Object.prototype.hasOwnProperty.call(VALIDATOR_CODES, err.status)) {
       code = VALIDATOR_CODES[err.status]!;
-      errors = err.errors.map((e) => ({ path: String(e.path ?? ""), message: String(e.message ?? "invalid") }));
+      errors = err.errors.map(safeFieldError);
     } else if (bodyParserType(err) === "entity.too.large") {
       code = "PAYLOAD_TOO_LARGE";
     } else if (bodyParserType(err) === "entity.parse.failed") {

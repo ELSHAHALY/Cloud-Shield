@@ -1,6 +1,6 @@
 # ADR-0006: docs-api, SPA (portal + SOC), Regional GRC hub and the local stack
 
-- **Status:** Accepted (16 Oct 2026, Phase E)
+- **Status:** Accepted (16 Oct 2026, Phase E); amended 17 Oct after the independent audit (E1–E12, see "Audit amendments")
 - **Deciders:** @YasseenAbdelghany (S2, owner), @ELSHAHALY (S1: edge decoy route, compute posture read, CI, compose), @ahklsfg (S3: SOC read and decoy publisher IAM, notify-only guard type, ATT&CK export)
 - **Relates to:** plan `docs/plans/s2-app-soc-ui-grc.md` (D1–D28, §16 verify list); ADR-0002 §5 (amended); ADR-0004 (edge, token contract); ADR-0005 (amended: `DecoyRouteHit` is notify-only)
 
@@ -44,6 +44,25 @@ Phases A–D built the platform, SOAR and the edge, but no application ran behin
 - **ESLint `react/no-danger`:** `eslint-plugin-react` does not support ESLint 10, so the SPA uses core `no-restricted-syntax` rules: no `dangerouslySetInnerHTML`, no `style` props (the CSP blocks them), no `innerHTML`/`outerHTML` assignment, no `localStorage`.
 - **Local stack:** moto does not validate SSE-KMS key ids and ignores `_custom_key_id_` over its API, so local mode uses a fixed `DATA_KMS_KEY_ARN` and the seed creates no KMS key. The seed adds an SQS queue and a rule on the local edge bus so `make local-smoke` can observe the decoy publish, and a dataset sentinel row in a reserved `_seed` partition for idempotency.
 
+## Audit amendments (independent audit, 17 Oct)
+
+No critical or high findings. All of the following are fixed in this PR, each with a regression test (`app/docs-api/test/audit-fixes.int.test.ts`, the decoy and SPA suites, and the Terraform tests):
+
+| ID | Sev. | Finding | Fix |
+|---|---|---|---|
+| E1 | medium | A title cut at 120 UTF-16 units could split a surrogate pair, so `encodeURIComponent` threw and the download answered 500; the audit event was written before the URL was signed. | Truncate by code point and `toWellFormed()`; lone surrogates are refused at create and patch (400); audit only after signing. |
+| E2 | medium | The orphan-upload cleanup deletes a specific version, which needs `s3:DeleteObjectVersion`; without it, an orphan stayed the current version forever (the 30-day erasure claim would be false). | `s3:DeleteObjectVersion` on `tenants/*` (data policy and its test). |
+| E3 | low | Callers without a viewer address shared one pre-auth bucket: 60 bad tokens locked out every such user. | Only a trusted viewer IP is limited. |
+| E4 | low | Every `TransactionCanceledException` became 409/404/412, even for throttling or validation. | Only `ConditionalCheckFailed` maps to a business error; `TransactionConflict` gives a retryable 409; anything else gives 500. |
+| E5 | low | A non-COMPLETE ECR scan reported 0 for every severity. | Counts are `null` unless COMPLETE; the UI says "no result (<status>)". |
+| E6 | low | An evidence object over 5 MiB made the chain "BROKEN". | Unverified (`null`, "not fully verified"), never intact and never BROKEN. |
+| E7 | low | Decoy audit writes had no global cap; IPv6 rotation within one /64 gave one write per request. | 60/min per task global audit cap; per-IP caps and the hourly publish dedupe are keyed on the IPv6 /64. |
+| E8 | low | The Terraform filter missed `AWS_ENDPOINT_URL_<SERVICE>`. | Filtered and refused by precondition (new test case). |
+| E9 | low | Validator messages echoed request input (parameter names, media types). | Fixed per-keyword messages; only safe-character paths are returned. |
+| E10 | low | An audit cursor outside the `from`/`to` window would be a DynamoDB ValidationException (500). | 400 `VALIDATION_FAILED`. |
+| E11 | info | `kms:Decrypt` on the SOAR key was unconditioned (the key also encrypts SNS and logs). | `kms:ViaService` limited to DynamoDB, S3 and SSM in the region. |
+| E12 | info | Makefile images pinned by tag only; `relatedToIncident` applied `Limit` before its filter. | Makefile pins by digest (CI env and service images are noted as manual bumps); related audit pages until 20 matches (bounded). |
+
 ## Residual risks
 
 - **Decoy (D13).** A caller holding the leaked origin secret can reach `execute-api` directly and forge `CloudFront-Viewer-Address`: that yields false audit IPs and notify-only noise, **never a block**. Bounded by the per-task caps, WAF `SoarApiRateLimit` and API Gateway throttling. Without `enable_decoy_route`, only authenticated probing reaches the decoy.
@@ -51,7 +70,7 @@ Phases A–D built the platform, SOAR and the edge, but no application ran behin
 - **Local mode in the production image (D22).** The code path exists in the image. Defence in depth: the config validator (local only with a local endpoint, `aws` refuses every local variable), the Terraform filter + precondition, and the API Gateway Cognito authorizer, which rejects non-Cognito tokens before the app sees them.
 - **Tenant isolation is not cryptographic or IAM-enforced** (ADR-0002 §5): the task role can reach every tenant's items; the API enforces the partition key from the token.
 - **Pre-signed download URLs are bearer URLs** for up to `PRESIGNED_URL_MAX_SECONDS` (300 s; the bucket policy caps `signatureAge` independently). Every issuance is audited.
-- **Rate limits and caches are per task** (×2 with two tasks). The agreement gate caches per tenant for 60 s, so another task may keep blocking writes for up to a minute after acceptance (fail closed, never open).
+- **Rate limits and caches are per task** (×2 with two tasks); failed authentication without a trusted viewer address is not rate-limited by the app (WAF and API Gateway throttling remain). The agreement gate caches per tenant for 60 s, so another task may keep blocking writes for up to a minute after acceptance (fail closed, never open).
 - **Click-through acceptance is evidence, not a qualified or advanced electronic signature;** the DPA/SLA are templates no counsel has reviewed. GRC items marked `verify` are unestablished.
 
 ## Follow-ups (recorded, not built)

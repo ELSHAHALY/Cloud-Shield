@@ -2,7 +2,7 @@ import { PutEventsCommand } from "@aws-sdk/client-eventbridge";
 import { QueryCommand } from "@aws-sdk/client-dynamodb";
 import { api, makeApp } from "./helpers/app";
 import { createResources, raw, testConfig, type Resources } from "./helpers/moto";
-import { decoyEvent, decoyIncidentId } from "../src/decoy/router";
+import { abuseKey, decoyEvent, decoyIncidentId } from "../src/decoy/router";
 import { parseViewerAddress } from "../src/middleware/source-ip";
 
 let r: Resources;
@@ -80,10 +80,10 @@ describe("decoy route", () => {
     tick(3_600_000);
     await api(t).get("/admin").set("CloudFront-Viewer-Address", "203.0.113.30:3").expect(403);
     expect(putEntries(send)).toHaveLength(2);
-    for (let i = 0; i < 40; i++) await api(t).get("/admin").set("CloudFront-Viewer-Address", `2001:db8::${(i + 1).toString(16)}:443`);
+    for (let i = 0; i < 40; i++) await api(t).get("/admin").set("CloudFront-Viewer-Address", `2001:db8:${(i + 1).toString(16)}::1:443`);
     expect(putEntries(send).length).toBe(30);
     const v6 = JSON.parse(putEntries(send)[2]!.Detail!);
-    expect(v6.resource.ipAddressDetails).toEqual({ ipAddressV6: "2001:db8::1" });
+    expect(v6.resource.ipAddressDetails).toEqual({ ipAddressV6: "2001:db8:1::1" });
 
     const noBus = await setup({ decoy: { publishEnabled: true, source: "cloudshield.edge" } });
     await api(noBus.t).get("/admin").set("CloudFront-Viewer-Address", "203.0.113.40:1").expect(403);
@@ -98,6 +98,16 @@ describe("decoy route", () => {
     expect((await platformAudit()).length - before).toBe(5);
     expect(t.logs.join("")).toContain("decoy audit cap reached");
     expect(t.logs.join("")).toContain("decoy publish failed");
+  });
+
+  it("keys caps on the IPv6 /64 and caps audit writes per task (audit E7)", async () => {
+    const { t, send } = await setup();
+    const before = (await platformAudit()).length;
+    for (let i = 0; i < 20; i++) await api(t).get("/admin").set("CloudFront-Viewer-Address", `2001:db8:aa:bb::${(i + 1).toString(16)}:443`);
+    expect(putEntries(send)).toHaveLength(1); // one /64, one publish this hour
+    expect((await platformAudit()).length - before).toBe(5); // one /64, 5 audit rows
+    for (let i = 0; i < 80; i++) await api(t).get("/admin").set("CloudFront-Viewer-Address", `198.51.${Math.floor(i / 250)}.${i % 250}:1`);
+    expect((await platformAudit()).length - before).toBeLessThanOrEqual(60);
   });
 
   it("never logs the viewer address, the token or the origin secret", async () => {
@@ -127,6 +137,13 @@ describe("viewer address parsing", () => {
     ["1".repeat(70), null],
   ])("%s -> %s", (input, expected) => {
     expect(parseViewerAddress(input)).toBe(expected);
+  });
+
+  it("derives abuse keys", () => {
+    expect(abuseKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(abuseKey("2001:db8:0:1::5")).toBe("2001:db8:0:1::/64");
+    expect(abuseKey("2001:0db8:0000:0001:0:0:0:9")).toBe("2001:db8:0:1::/64");
+    expect(abuseKey("::1")).toBe("0:0:0:0::/64");
   });
 
   it("builds ids that match the finding id contract", () => {

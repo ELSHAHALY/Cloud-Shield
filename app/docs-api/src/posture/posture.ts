@@ -68,12 +68,13 @@ export function parseImage(appImage: string | undefined, repositoryName: string 
   return { registryId: m[1]!, region: m[2]!, repositoryName: m[3]!, digest: m[4]! };
 }
 
+/** Counts are null unless the scan COMPLETEd: "0" for a failed or unsupported scan would over-claim (audit E5). */
 export interface EcrScan {
   status: string;
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
+  critical: number | null;
+  high: number | null;
+  medium: number | null;
+  low: number | null;
   completedAt: string | null;
 }
 
@@ -84,9 +85,10 @@ export async function ecrScan(ecr: ECRClient, image: ReturnType<typeof parseImag
       new DescribeImageScanFindingsCommand({ registryId: image.registryId, repositoryName: image.repositoryName, imageId: { imageDigest: image.digest }, maxResults: 1 }),
     );
     const counts = (out.imageScanFindings?.findingSeverityCounts ?? {}) as Record<string, number | undefined>;
-    const n = (k: string) => (typeof counts[k] === "number" ? counts[k] : 0);
+    const status = String(out.imageScanStatus?.status ?? "UNKNOWN").slice(0, 32);
+    const n = (k: string) => (status !== "COMPLETE" ? null : typeof counts[k] === "number" ? counts[k] : 0);
     return {
-      status: String(out.imageScanStatus?.status ?? "UNKNOWN").slice(0, 32),
+      status,
       critical: n("CRITICAL"),
       high: n("HIGH"),
       medium: n("MEDIUM"),

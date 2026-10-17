@@ -28,6 +28,7 @@ export function chainLabel(v: EvidenceVerification): { tone: "good" | "bad" | "w
   if (v.chainOfCustodyOk === true) return { tone: "good", text: "Chain of custody: intact" };
   if (v.chainOfCustodyOk === false) return { tone: "bad", text: "Chain of custody: BROKEN" };
   if (v.truncated) return { tone: "warn", text: "Chain of custody: not fully verified (more than 20 objects)" };
+  if (v.checks.some((c) => c.error === "too-large")) return { tone: "warn", text: "Chain of custody: not fully verified (an object over 5 MiB was not hashed)" };
   return { tone: "neutral", text: "No evidence recorded" };
 }
 

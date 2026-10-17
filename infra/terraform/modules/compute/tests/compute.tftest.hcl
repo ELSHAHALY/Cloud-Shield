@@ -271,6 +271,7 @@ run "filter_drops_local_mode_keys" {
       AUTH_LOCAL_JWKS_URI = "http://local-idp:9000/.well-known/jwks.json"
       AUTH_LOCAL_OTHER    = "x"
       AWS_ENDPOINT_URL    = "http://moto:5000"
+      AWS_ENDPOINT_URL_S3 = "http://moto:5000"
       S3_PUBLIC_ENDPOINT  = "http://localhost:5000"
       DOCUMENTS_TABLE     = "cs-test-documents"
     }
@@ -281,7 +282,7 @@ run "filter_drops_local_mode_keys" {
     error_message = "CLOUDSHIELD_ENV other than aws, AUTH_LOCAL_*, AWS_ENDPOINT_URL and S3_PUBLIC_ENDPOINT are filtered out (D22)."
   }
   assert {
-    condition     = local.forbidden_env_given == sort(["AUTH_LOCAL_ISSUER", "AUTH_LOCAL_JWKS_URI", "AUTH_LOCAL_OTHER", "AWS_ENDPOINT_URL", "CLOUDSHIELD_ENV", "S3_PUBLIC_ENDPOINT"])
+    condition     = local.forbidden_env_given == sort(["AUTH_LOCAL_ISSUER", "AUTH_LOCAL_JWKS_URI", "AUTH_LOCAL_OTHER", "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", "CLOUDSHIELD_ENV", "S3_PUBLIC_ENDPOINT"])
     error_message = "Every forbidden key is detected."
   }
 }
@@ -318,6 +319,15 @@ run "refuses_aws_endpoint_url" {
   variables {
     container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     container_environment = { AWS_ENDPOINT_URL = "http://moto:5000" }
+  }
+  expect_failures = [aws_ecs_task_definition.app]
+}
+
+run "refuses_aws_endpoint_url_per_service" {
+  command = plan
+  variables {
+    container_image       = "example.dkr.ecr.us-east-1.amazonaws.com/cs-test/docs-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    container_environment = { AWS_ENDPOINT_URL_DYNAMODB = "http://moto:5000" }
   }
   expect_failures = [aws_ecs_task_definition.app]
 }

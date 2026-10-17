@@ -13,7 +13,8 @@
 #                         versions, retention and legal hold
 #   EvidenceLockConfig    the bucket's Object Lock configuration (honest
 #                         "not enabled" in the UI)
-#   SoarKeyDecrypt        kms:Decrypt on the SOAR key (table + bucket SSE)
+#   SoarKeyDecrypt        kms:Decrypt on the SOAR key (table + bucket SSE),
+#                         only via dynamodb / s3 / ssm (kms:ViaService)
 #   DryRunSwitch          ssm:GetParameter on the dry-run parameter
 #   PublishDecoy          only with PB-05 AND app_publishes_decoy:
 #                         events:PutEvents on the edge bus, pinned to
@@ -71,6 +72,13 @@ data "aws_iam_policy_document" "app_soc_read" {
     sid       = "SoarKeyDecrypt"
     actions   = ["kms:Decrypt"]
     resources = [aws_kms_key.this.arn]
+    # The SOAR key also encrypts the SNS topic and SOAR logs: only through the
+    # services the SOC read actually uses (audit E11).
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["dynamodb.${local.region}.amazonaws.com", "s3.${local.region}.amazonaws.com", "ssm.${local.region}.amazonaws.com"]
+    }
   }
   statement {
     sid       = "DryRunSwitch"

@@ -369,6 +369,13 @@ run "soc_read_is_exactly_the_specified_grants" {
     error_message = "SOC read: GetItem on the table, Query on the status-eventTime index only, evidence reads under incidents/, the lock config, kms:Decrypt and the dry-run parameter. Nothing else (no PutEvents without app_publishes_decoy)."
   }
   assert {
+    condition = jsonencode(sort(one([
+      for st in jsondecode(data.aws_iam_policy_document.app_soc_read[0].json).Statement : st
+      if st.Sid == "SoarKeyDecrypt"
+    ]).Condition.StringEquals["kms:ViaService"])) == jsonencode(["dynamodb.us-east-1.amazonaws.com", "s3.us-east-1.amazonaws.com", "ssm.us-east-1.amazonaws.com"])
+    error_message = "kms:Decrypt on the SOAR key only via DynamoDB, S3 and SSM (audit E11)."
+  }
+  assert {
     condition = !anytrue(flatten([
       for s in jsondecode(data.aws_iam_policy_document.app_soc_read[0].json).Statement : [
         for a in flatten([s.Action]) :
@@ -380,9 +387,9 @@ run "soc_read_is_exactly_the_specified_grants" {
   assert {
     condition = alltrue([
       for s in jsondecode(data.aws_iam_policy_document.app_soc_read[0].json).Statement :
-      s.Effect == "Allow" && try(s.Condition, null) == null
+      s.Effect == "Allow" && (s.Sid == "SoarKeyDecrypt" || try(s.Condition, null) == null)
     ])
-    error_message = "Without the publisher flag every statement is a plain Allow."
+    error_message = "Without the publisher flag every statement is an Allow, unconditioned except the kms:ViaService pin on SoarKeyDecrypt."
   }
   assert {
     condition     = aws_iam_role_policy.app_soc_read[0].role == "cs-test-app-task" && aws_iam_role_policy.app_soc_read[0].name == "soar-soc-read"

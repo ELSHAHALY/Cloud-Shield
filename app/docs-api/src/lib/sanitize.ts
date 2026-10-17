@@ -6,7 +6,13 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 /** Strip control characters and cap length (audit user agent, decoy path). */
 export function clean(value: unknown, max = 256): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  return value.replace(CONTROL, "").slice(0, max);
+  // By code point, never splitting a surrogate pair; lone surrogates become U+FFFD (audit E1).
+  return Array.from(value.replace(CONTROL, "").toWellFormed()).slice(0, max).join("");
+}
+
+/** Well-formed UTF-16 (no lone surrogates): such text cannot be stored, signed or encoded reliably. */
+export function wellFormed(...values: unknown[]): boolean {
+  return values.every((v) => (typeof v === "string" ? v.isWellFormed() : Array.isArray(v) ? v.every((x) => typeof x !== "string" || x.isWellFormed()) : true));
 }
 
 /**
@@ -17,7 +23,7 @@ export function clean(value: unknown, max = 256): string | null {
 export function attachmentDisposition(name: string): string {
   const base = (clean(name, 120) ?? "download").trim() || "download";
   const ascii = base.replace(/[^A-Za-z0-9._ -]/g, "_").replace(/^[.\s]+/, "") || "download";
-  const encoded = encodeURIComponent(base).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const encoded = encodeURIComponent(base.toWellFormed()).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 

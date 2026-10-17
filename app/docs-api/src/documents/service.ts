@@ -12,7 +12,8 @@ import { canWriteAny, type Principal } from "../auth/principal";
 import type { AuditLog } from "../audit/audit";
 import { decodeCursor, encodeCursor } from "../lib/cursor";
 import { AppError } from "../lib/errors";
-import { attachmentDisposition, EXTENSION } from "../lib/sanitize";
+import { attachmentDisposition, EXTENSION, wellFormed } from "../lib/sanitize";
+import { rethrowUnlessConditionFailure } from "../lib/ddb-errors";
 import { UUIDV7_RE, uuidv7 } from "../lib/uuidv7";
 import { matchesType, mediaType, type ContentType } from "./magic";
 
@@ -87,11 +88,6 @@ export function toMeta(item: DocumentItem) {
   };
 }
 
-function isConditionalFailure(err: unknown): boolean {
-  const name = (err as { name?: string } | null)?.name;
-  return name === "ConditionalCheckFailedException" || name === "TransactionCanceledException";
-}
-
 export class DocumentService {
   private readonly now: () => Date;
   constructor(private readonly d: DocumentsDeps) {
@@ -143,6 +139,7 @@ export class DocumentService {
 
   async create(req: Request, p: Principal, input: DocumentCreate) {
     if (input.sizeBytes > this.d.maxUploadBytes) throw new AppError("PAYLOAD_TOO_LARGE", "sizeBytes exceeds the upload limit");
+    if (!wellFormed(input.title, input.description, input.tags)) throw new AppError("VALIDATION_FAILED", "text must be well-formed Unicode");
     const id = uuidv7(this.now().getTime());
     const at = this.now().toISOString();
     const item: DocumentItem = {
@@ -178,8 +175,8 @@ export class DocumentService {
         }),
       );
     } catch (err) {
-      if (isConditionalFailure(err)) throw new AppError("CONFLICT", "document already exists");
-      throw err;
+      rethrowUnlessConditionFailure(err);
+      throw new AppError("CONFLICT", "document already exists");
     }
     return toMeta(item);
   }
@@ -248,8 +245,8 @@ export class DocumentService {
       await this.d.s3
         .send(new DeleteObjectCommand({ Bucket: this.d.bucket, Key: item.s3Key, ...(put.VersionId ? { VersionId: put.VersionId } : {}) }))
         .catch((cleanupErr: unknown) => this.d.logger.error({ err: cleanupErr, requestId: req.requestId }, "orphan upload cleanup failed"));
-      if (isConditionalFailure(err)) throw new AppError("CONFLICT", "document changed during upload");
-      throw err;
+      rethrowUnlessConditionFailure(err);
+      throw new AppError("CONFLICT", "document changed during upload");
     }
     return toMeta({ ...item, status: "AVAILABLE", updatedAt: at, version: item.version + 1, ...(put.VersionId ? { s3VersionId: put.VersionId } : {}) });
   }
@@ -266,6 +263,7 @@ export class DocumentService {
     }
     const fields = PATCH_FIELDS.filter((f) => patch[f] !== undefined);
     if (fields.length === 0) throw new AppError("VALIDATION_FAILED", "empty patch");
+    if (!wellFormed(patch.title, patch.description, patch.tags)) throw new AppError("VALIDATION_FAILED", "text must be well-formed Unicode");
     const names: Record<string, string> = { "#status": "status" };
     const values: Record<string, unknown> = { ":available": "AVAILABLE", ":expected": expected, ":one": 1, ":at": this.now().toISOString() };
     const sets = ["updatedAt = :at", "version = version + :one"];
@@ -301,8 +299,8 @@ export class DocumentService {
         }),
       );
     } catch (err) {
-      if (isConditionalFailure(err)) throw new AppError(ifMatch !== undefined ? "PRECONDITION_FAILED" : "CONFLICT");
-      throw err;
+      rethrowUnlessConditionFailure(err);
+      throw new AppError(ifMatch !== undefined ? "PRECONDITION_FAILED" : "CONFLICT");
     }
     const next: DocumentItem = { ...item, version: item.version + 1, updatedAt: values[":at"] as string };
     for (const f of fields) (next as unknown as Record<string, unknown>)[f] = patch[f];
@@ -313,14 +311,8 @@ export class DocumentService {
     const item = await this.load(p, docId);
     if (item.status !== "AVAILABLE") throw new AppError("CONFLICT", "document content not uploaded yet");
     const expiresIn = this.d.presignMaxSeconds;
-    const event = this.d.audit.build(req, {
-      partition: p.tenantId,
-      action: "DOCUMENT_DOWNLOAD_URL_ISSUED",
-      resource: { type: "document", id: docId },
-      details: { expiresInSeconds: expiresIn },
-    });
-    await this.d.audit.put(event);
     const filename = `${item.title ?? "document"}${EXTENSION[item.contentType] ?? ""}`;
+    // Sign first: the audit event records only a URL that was really issued (audit E1).
     const url = await getSignedUrl(
       this.d.s3Presign,
       new GetObjectCommand({
@@ -331,6 +323,14 @@ export class DocumentService {
         ResponseContentType: item.contentType,
       }),
       { expiresIn },
+    );
+    await this.d.audit.put(
+      this.d.audit.build(req, {
+        partition: p.tenantId,
+        action: "DOCUMENT_DOWNLOAD_URL_ISSUED",
+        resource: { type: "document", id: docId },
+        details: { expiresInSeconds: expiresIn },
+      }),
     );
     return { url, expiresAt: new Date(this.now().getTime() + expiresIn * 1000).toISOString() };
   }
@@ -370,8 +370,8 @@ export class DocumentService {
           }),
         );
       } catch (err) {
-        if (isConditionalFailure(err)) throw new AppError("NOT_FOUND");
-        throw err;
+        rethrowUnlessConditionFailure(err);
+        throw new AppError("NOT_FOUND");
       }
     }
     if (item.s3VersionId) {

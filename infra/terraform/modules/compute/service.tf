@@ -7,19 +7,20 @@
 # output.nlb_arn.
 ###############################################################################
 
-# Phase E D22: local-mode switches must never reach a task definition. They
+# Phase E D22: local-mode switches must never reach a task definition
+# (AWS_ENDPOINT_URL_<SERVICE> too: the SDK honours it on its own, audit E8). They
 # are filtered out here AND the task definition refuses to plan if any was
 # given (defence in depth: the filter alone would hide a mis-set variable).
 locals {
   forbidden_env_keys = ["AUTH_LOCAL_ISSUER", "AUTH_LOCAL_JWKS_URI", "AWS_ENDPOINT_URL", "S3_PUBLIC_ENDPOINT"]
   forbidden_env_given = sort(concat(
-    [for k in keys(var.container_environment) : k if contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_")],
+    [for k in keys(var.container_environment) : k if contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_") || startswith(k, "AWS_ENDPOINT_URL_")],
     [for k, v in var.container_environment : k if(k == "CLOUDSHIELD_ENV" ? v != "aws" : false)],
   ))
   container_environment = merge(
     {
       for k, v in var.container_environment : k => v
-      if(contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_") ? false : (k == "CLOUDSHIELD_ENV" ? v == "aws" : true))
+      if(contains(local.forbidden_env_keys, k) || startswith(k, "AUTH_LOCAL_") || startswith(k, "AWS_ENDPOINT_URL_") ? false : (k == "CLOUDSHIELD_ENV" ? v == "aws" : true))
     },
     # Injected by the module itself (posture read, D18), so dev never feeds
     # compute's own outputs back in as compute inputs.
@@ -155,7 +156,7 @@ resource "aws_ecs_task_definition" "app" {
   lifecycle {
     precondition {
       condition     = length(local.forbidden_env_given) == 0
-      error_message = "container_environment must never carry local-mode settings (CLOUDSHIELD_ENV other than aws, AUTH_LOCAL_*, AWS_ENDPOINT_URL, S3_PUBLIC_ENDPOINT): Phase E D22."
+      error_message = "container_environment must never carry local-mode settings (CLOUDSHIELD_ENV other than aws, AUTH_LOCAL_*, AWS_ENDPOINT_URL[_*], S3_PUBLIC_ENDPOINT): Phase E D22."
     }
   }
 }

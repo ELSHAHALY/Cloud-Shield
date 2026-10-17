@@ -816,10 +816,10 @@ export interface components {
             image: {
                 ecrScan: {
                     completedAt: components["schemas"]["NullableString"];
-                    critical: number;
-                    high: number;
-                    low: number;
-                    medium: number;
+                    critical: number | null;
+                    high: number | null;
+                    low: number | null;
+                    medium: number | null;
                     status: string;
                 } | null;
                 reference: components["schemas"]["NullableString"];

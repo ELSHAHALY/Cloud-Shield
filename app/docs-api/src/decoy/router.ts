@@ -1,6 +1,7 @@
 // Decoy route (plan D13–D15, §6). Mounted at /admin BEFORE authentication and
 // before any body parser: it fires with or without a token and never reads a
-// body. A hit is audited in `_platform` and, when enabled, published to the
+// body. A hit is audited in `_platform` (5/min per IP or IPv6 /64, 60/min per
+// task) and, when enabled, published to the
 // edge bus as CloudShield:IPAddress/DecoyRouteHit, which SOAR records and
 // notifies on but never blocks (the guard refuses the type: notify-only).
 import { isIP } from "node:net";
@@ -63,11 +64,25 @@ export function decoyEvent(input: { ip: string; at: Date; accountId?: string; re
   return { EventBusName: input.busName, Source: input.source, DetailType: EDGE_DETAIL_TYPE, Detail: JSON.stringify(detail) };
 }
 
+/**
+ * Abuse key: an IPv4 address, or the /64 of an IPv6 address, so rotating
+ * through one IPv6 prefix does not reset the caps (audit E7).
+ */
+export function abuseKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const [head = "", tail = ""] = ip.toLowerCase().split("::");
+  const h = head ? head.split(":") : [];
+  const t = tail ? tail.split(":") : [];
+  const full = ip.includes("::") ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t] : h;
+  return `${full.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
 export function createDecoyRouter(d: DecoyDeps): Router {
   const now = d.now ?? (() => new Date());
-  const published = new Map<string, string>(); // ip -> hour stamp (one publish per IP per hour per task)
+  const published = new Map<string, string>(); // abuse key -> hour stamp (one publish per IP or /64 per hour per task)
   const globalCap = new RateLimiter(30, 60_000, 1);
   const auditCap = new RateLimiter(5, 60_000);
+  const auditGlobalCap = new RateLimiter(60, 60_000, 1);
   let auditSuppressed = 0;
 
   const handler = async (req: Request, res: Response): Promise<void> => {
@@ -88,13 +103,13 @@ export function createDecoyRouter(d: DecoyDeps): Router {
     let publishSkipped: string | null = null;
     if (!d.publishEnabled || !d.busName) publishSkipped = "publisher-disabled";
     else if (!ip) publishSkipped = "untrusted-source-ip";
-    else if (published.get(ip) === hourStamp(at)) publishSkipped = "already-published-this-hour";
+    else if (published.get(abuseKey(ip)) === hourStamp(at)) publishSkipped = "already-published-this-hour";
     else if (globalCap.take("all") > 0) publishSkipped = "global-cap";
 
     let didPublish = false;
     if (publishSkipped === null && ip && d.busName) {
       if (published.size > 10_000) published.clear();
-      published.set(ip, hourStamp(at));
+      published.set(abuseKey(ip), hourStamp(at));
       try {
         const out = await d.events.send(
           new PutEventsCommand({
@@ -108,7 +123,7 @@ export function createDecoyRouter(d: DecoyDeps): Router {
       }
     }
 
-    if (auditCap.take(ip ?? "unknown") === 0) {
+    if (auditCap.take(ip ? abuseKey(ip) : "unknown") === 0 && auditGlobalCap.take("all") === 0) {
       const event = d.audit.build(req, {
         partition: PLATFORM_PARTITION,
         action: "DECOY_ROUTE_HIT",

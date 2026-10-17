@@ -4,6 +4,7 @@ import type { Request } from "express";
 import type { Principal } from "../auth/principal";
 import type { AuditLog } from "../audit/audit";
 import { AppError } from "../lib/errors";
+import { rethrowUnlessConditionFailure } from "../lib/ddb-errors";
 import { assess, deploymentCountries, type GrcProfile, type PlatformFacts } from "./engine";
 import type { GrcContent } from "./content";
 
@@ -97,8 +98,8 @@ export class GrcService {
         }),
       );
     } catch (err) {
-      if ((err as { name?: string }).name === "TransactionCanceledException") throw new AppError("CONFLICT", "profile changed concurrently");
-      throw err;
+      rethrowUnlessConditionFailure(err);
+      throw new AppError("CONFLICT", "profile changed concurrently");
     }
     return record;
   }

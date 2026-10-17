@@ -111,7 +111,7 @@ export function toMarkdown(r: IrReport): string {
   if (r.evidence.length) {
     lines.push("| Object | Recorded | Recomputed | Match |", "|---|---|---|---|");
     for (const e of r.evidence) lines.push(`| \`${md(e.key)}\` | \`${md(e.recorded_sha256)}\` | \`${md(e.actual_sha256)}\` | ${e.ok ? "✓" : `✗ ${md(e.error ?? "mismatch")}`} |`);
-    const verdict = r.chain_of_custody_ok === true ? "intact" : r.chain_of_custody_ok === false ? "**BROKEN**" : "not fully verified (more than 20 objects: run the authoritative tool)";
+    const verdict = r.chain_of_custody_ok === true ? "intact" : r.chain_of_custody_ok === false ? "**BROKEN**" : "not fully verified (more than 20 objects, or an object over 5 MiB: run the authoritative tool)";
     lines.push("", `Chain of custody: ${verdict}.`);
   } else {
     lines.push("No evidence recorded for this incident.");

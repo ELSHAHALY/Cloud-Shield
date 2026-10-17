@@ -102,7 +102,8 @@ expired-blocks:
 # ---- Phase E: app (docs-api, spa, local-dev) and the local stack ----
 APP_PKGS := app/docs-api app/spa app/local-dev
 COMPOSE  := docker compose -f docker-compose.local.yml
-HADOLINT_IMAGE ?= hadolint/hadolint:v2.14.0
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e
+MOTO_IMAGE     ?= motoserver/moto:5.2.4@sha256:120b1589c6df7e35d2092935f6ff724486bb2c4189d0e36ce795baba1400ffd2
 
 app-lint:
 	@for d in $(APP_PKGS); do echo "== lint $$d"; (cd $$d && npm ci --ignore-scripts >/dev/null && npm run lint && npm run typecheck) || exit 1; done
@@ -125,7 +126,7 @@ dockerlint:
 
 # moto alone, for the Jest integration suites.
 local-moto:
-	docker run -d --rm --name cloudshield-moto -p 127.0.0.1:5000:5000 motoserver/moto:5.2.4
+	docker run -d --rm --name cloudshield-moto -p 127.0.0.1:5000:5000 $(MOTO_IMAGE)
 
 local-up:
 	$(COMPOSE) up -d --build --wait --wait-timeout 300

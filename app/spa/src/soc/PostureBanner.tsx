@@ -37,10 +37,14 @@ export function PostureBanner({ posture }: { posture: Posture }) {
         <div>
           <h3 className="font-medium">Image</h3>
           <p data-testid="image-policy">{posture.imagePolicy}</p>
-          {scan ? (
+          {scan && scan.status === "COMPLETE" && scan.critical !== null ? (
             <p data-testid="ecr-scan" className="mt-1">
-              ECR basic scan of the running digest ({scan.status}): {scan.critical} critical, {scan.high} high, {scan.medium} medium, {scan.low} low
+              ECR basic scan of the running digest (COMPLETE): {scan.critical} critical, {scan.high} high, {scan.medium} medium, {scan.low} low
               {scan.completedAt ? `, completed ${scan.completedAt}` : ""}.
+            </p>
+          ) : scan ? (
+            <p data-testid="ecr-scan" className="mt-1 text-slate-700">
+              ECR scan of the running digest: no result ({scan.status}).
             </p>
           ) : (
             <p data-testid="ecr-scan" className="mt-1 text-slate-700">

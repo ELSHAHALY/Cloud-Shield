@@ -299,9 +299,12 @@ data "aws_iam_policy_document" "app" {
 
   # Phase E (F6, D8): the app reads pinned versions (GetObjectVersion) and
   # only ever builds keys under tenants/<tenantId>/docs/<docId>.
+  # DeleteObjectVersion (audit E2): when an upload's transaction fails, the
+  # app removes the exact version it just wrote; without it that orphan stays
+  # current forever and the 30-day erasure claim (D10) would be false.
   statement {
     sid       = "DocumentObjects"
-    actions   = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"]
+    actions   = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
     resources = ["${aws_s3_bucket.documents.arn}/tenants/*"]
   }
 

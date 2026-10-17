@@ -3,7 +3,7 @@
     "target": "ES2023",
     "module": "commonjs",
     "moduleResolution": "node10",
-    "lib": ["ES2023"],
+    "lib": ["ES2024"],
     "types": ["node", "jest"],
     "strict": true,
     "noUncheckedIndexedAccess": true,

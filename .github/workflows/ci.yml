@@ -39,6 +39,8 @@ env:
   # Phase E D2: the docs-api image is built with context app/ so the contract
   # (app/openapi.yaml) and the GRC data are inside it.
   IMAGE_CONTEXT: ${{ vars.IMAGE_CONTEXT || 'app' }}
+  # Not covered by Dependabot (env values / service images): bump by hand with
+  # the compose and Dockerfile pins (audit E12).
   HADOLINT_IMAGE: "hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
 
 jobs:

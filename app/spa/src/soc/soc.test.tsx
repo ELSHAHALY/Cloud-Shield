@@ -19,6 +19,11 @@ describe("PostureBanner", () => {
     expect(screen.getByText(/Gates were enforced/)).toBeInTheDocument();
   });
 
+  it("shows no counts for a scan that did not complete", () => {
+    render(<PostureBanner posture={posture({ image: { reference: "r", ecrScan: { status: "UNSUPPORTED_IMAGE", critical: null, high: null, medium: null, low: null, completedAt: null } } })} />);
+    expect(screen.getByTestId("ecr-scan").textContent).toBe("ECR scan of the running digest: no result (UNSUPPORTED_IMAGE).");
+  });
+
   it("never claims a clean image when the scan is unavailable, and labels local builds", () => {
     const p = posture({ image: { reference: null, ecrScan: null }, build: { ...posture().build, local: true, commit: "local", gatesEnforced: false } });
     p.containment = { ...p.containment, dryRun: null, lastMttcSeconds: null, failedLast24h: null };
@@ -116,6 +121,8 @@ describe("EvidencePanel", () => {
     expect(chainLabel(evidence({ chainOfCustodyOk: true })).text).toBe("Chain of custody: intact");
     expect(chainLabel(evidence({ chainOfCustodyOk: null, truncated: true })).tone).toBe("warn");
     expect(chainLabel(evidence({ chainOfCustodyOk: null, checks: [] })).text).toBe("No evidence recorded");
+    const big = evidence({ chainOfCustodyOk: null, checks: [{ ...evidence().checks[0]!, ok: false, error: "too-large", actualSha256: null }] });
+    expect(chainLabel(big).text).toContain("over 5 MiB");
   });
 
   it("downloads the IR report through the API as a blob (bearer), never rendering it", async () => {

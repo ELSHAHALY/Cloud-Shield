@@ -7,6 +7,7 @@ import type { Principal, TenantId } from "../auth/principal";
 import type { AuditLog } from "../audit/audit";
 import { AppError } from "../lib/errors";
 import { clean } from "../lib/sanitize";
+import { rethrowUnlessConditionFailure } from "../lib/ddb-errors";
 import { publicAgreement, type AgreementEntry, type Catalogue } from "./catalogue";
 
 export interface Acceptance {
@@ -156,8 +157,7 @@ export class AgreementService {
         }),
       );
     } catch (err) {
-      const name = (err as { name?: string }).name;
-      if (name !== "TransactionCanceledException") throw err;
+      rethrowUnlessConditionFailure(err);
       // A concurrent acceptance won: first acceptance wins, return it.
       const winner = (await this.markers(p.tenantId, [entry])).get(markerKey(entry));
       if (!winner) throw err;
