@@ -65,7 +65,7 @@ The module-to-boundary mapping is ADR-0002 §1 [repo: docs/adr/0002-module-map-a
 
 ### 1.4 Qualitative STRIDE per boundary
 
-The table is qualitative: it names the threat the design considered, the control that exists in the repository, and the residual risk the repository itself records. It does not rate likelihood or impact; the plan's risk ratings are not in the repository (chapter 01 §7).
+The table is qualitative: it names the threat the design considered, the control that exists in the repository, and the residual risk the repository itself records. It does not rate likelihood or impact; the plan's risk ratings are not in the repository (chapter 01 §1.7).
 
 | Boundary | STRIDE | Threat | Control in the repository | Residual (as recorded) |
 |---|---|---|---|---|
@@ -366,7 +366,7 @@ Phase F adds an export of the assessment the hub has already fetched, named the 
 | Disclaimer | The server's ruleset disclaimer, verbatim | [repo: app/spa/src/grc/readinessPack.ts L62] |
 | Provenance | Tenant, ruleset version, ruleset SHA-256, ruleset `lastReviewed`, profile version, server `generatedAt`, client `exportedAt`, format, platform facts; a warning if the served ruleset hash differs from the assessed one | [repo: app/spa/src/grc/readinessPack.ts L64–79] |
 | Content | Summary counts for all six statuses; per-framework tables of applicable findings (`NOT_APPLICABLE` counted but not listed); "⚠ VERIFY against the official text" on every `citationStatus = verify` row; a customer-actions list; the residency-GAP-by-construction note | [repo: app/spa/src/grc/readinessPack.ts L8, L81–105] |
-| Escaping | `mdCell` folds line breaks, caps length at 2,000 characters, entity-encodes `&`, `<`, `>` and escapes `\`, `|`, `[`, `]` and backticks, so ruleset text can break neither the table nor become HTML, a link or code | [repo: app/spa/src/grc/readinessPack.ts L10, L15–28] |
+| Escaping | `mdCell` folds line breaks, caps length at 2,000 characters, entity-encodes `&`, `<`, `>`, escapes `\`, `\|`, `[`, `]` and backticks, and defuses GFM autolinks (`://`, `www.`, `@` become character references). Status values go through it too. So ruleset text cannot break the table or become HTML, an inline link, an image, an autolink or code (checked by rendering a hostile pack with pandoc's GFM reader during the Phase F audit fixes) | [repo: app/spa/src/grc/readinessPack.ts L10, L15–32] |
 | JSON | The assessment verbatim plus `exportMeta {format: "cloudshield.grc.readiness-pack/1", exportedAt, tenantId, rulesetVersion, rulesetSha256, rulesetLastReviewed, notice, disclaimer}` | [repo: app/spa/src/grc/readinessPack.ts L6, L110–125] |
 | File | `cloudshield-grc-readiness-<tenant>-<rulesetVersion>.<md\|json>`, sanitised to `[A-Za-z0-9._-]`; Blob → object URL → `<a download>` → revoke, the `EvidencePanel` pattern | [repo: app/spa/src/grc/readinessPack.ts L30–33, L127–137] |
 | Tests | Banner, disclaimer and provenance always present; every verify finding marked and no doc finding; NOT_APPLICABLE counted not listed; hostile text escaped; ruleset-mismatch warning; JSON round trip; filename sanitised; object URL revoked; buttons absent before the assessment loads and without `grc:assess` | [repo: app/spa/src/grc/readinessPack.test.ts L39–112; app/spa/src/grc/grc.test.tsx L70–118] |
@@ -435,7 +435,7 @@ The `config.test.ts` suite covers both modes ("aws mode (default, strict)" and "
 | `make local-smoke` | 8 end-to-end checks on the compose stack (1, 2, 3, 4a–4c, 5a, 5b) | local-measured / CI `app-smoke` |
 | `modules/{identity,data,edge}/tests` | Offline Terraform tests with mocked providers | local-measured / CI |
 
-*Table 5.6: suites [repo: app/docs-api/test/; app/spa/src/; app/local-dev/src/smoke.ts L36–64; infra/terraform/modules/*/tests/].*
+*Table 5.6: suites [repo: app/docs-api/test/; app/spa/src/; app/local-dev/src/smoke.ts L36–L66; infra/terraform/modules/*/tests/].*
 
 Previous record: docs-api Jest 290 tests in 17 suites (94.5 % lines, 86.8 % branches, against gates of 90 and 85); SPA Vitest 50 tests (96.3 % lines); local-dev Jest 5; local smoke 8/8; Terraform tests identity 8, data 6, edge 14 [HANDOFF §13]. CI ran `gate: app (lint + typecheck + test + build)` and `app-smoke` green on PR #4 with the scan steps really passing [CI: run 38984704551, PR #4, 9adc96d]. The Phase F figures, including the readiness-pack tests, are in chapter 07 §3.
 

@@ -84,7 +84,7 @@ Code-dependent resources are written in full but **off** until their artifact ex
 | `enable_report_worker` | `false` | EC2 forensic target carrying the SOAR scope tag |
 | `soar_playbook_package` | `null` | Safety guard + PB-01/02/03 Lambdas and the `cs-ir-router` state machine. Until then GuardDuty findings go **straight to SNS email**. PB-04, PB-05 and the notifier also need it. |
 | `soar_dry_run` | `true` | `false` = playbooks really act |
-| `evidence_object_lock_days` | `0` | Phase F: GOVERNANCE Object Lock on the SOAR evidence bucket for N days. **Set before the first apply** (only settable at bucket creation); locked versions block teardown for N days. |
+| `evidence_object_lock_days` | `0` | Phase F: GOVERNANCE Object Lock on the SOAR evidence bucket for N days. **Set before the first apply** (only settable at bucket creation); locked versions block teardown for N days. Changing it after the first apply is expected to **replace the evidence bucket and delete its contents** (`evidence_force_destroy = true`) [verify with `terraform plan`]: check the plan shows no replacement of `module.soar.aws_s3_bucket.evidence`. |
 | `enable_edge` | `false` | CloudFront, the CloudFront and regional WAFs (≈ US$20/month), the SPA bucket and WAF logging; the REST API too when `container_image` is set; and **PB-05** (edge bus, harvester + sighting table, never-block list, auto-expiry sweeper) when the package is set. **Requires `aws_region = us-east-1`** ([ADR-0004](docs/adr/0004-edge-identity-waf.md)). |
 | `soar_scope_app_service` | `false` | The SOAR scope tag on the docs-api ECS service and its tasks. **PB-04** exists only with this, a container image and `guardduty_runtime_monitoring = true` (paid) ([ADR-0005](docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md)). |
 | `chatops_webhook_param_name` | `""` | The ChatOps notifier, subscribed to the incidents topic. Name an SSM SecureString you created with the SOAR key ([runbook](docs/runbooks/chatops-setup.md)); the URL never enters Terraform. |
@@ -214,7 +214,7 @@ docs-api runs its **production image** in `CLOUDSHIELD_ENV=local`, which its con
 
 | What | Command | Where |
 |---|---|---|
-| **Everything local, in sequence** | `make verify-all` (or `scripts/verify-all.sh soar spa` for a subset) | local, before you push |
+| **Everything local, in sequence** | `make verify-all` (or `scripts/verify-all.sh soar spa` for a subset). Needs terraform, Python + `soar/requirements-dev.txt`, Node 24, Docker + Compose ≥ 2.20, checkov, gitleaks, a full clone and free ports 3000/5000. Exit 0 pass, 1 check failed, 2 prerequisite missing, 3 tree changed. `VERIFY_ALLOW_SKIP=1` skips a domain whose tool is missing (RESULT: INCOMPLETE); `NO_COLOR=1` for plain output. Semgrep, Trivy and ZAP are left to CI. | local, before you push |
 | Format | `make fmt` / `terraform fmt -check -recursive infra/terraform` | CI `iac` job |
 | Validate every root + module | `make validate` | CI `iac` job |
 | Module unit tests (mocked AWS, no creds) | `make test` | CI `iac` job |

@@ -13,8 +13,9 @@ const RESIDENCY_TOPICS: ReadonlySet<string> = new Set(["cross-border", "data-hos
 const STATUS_ORDER: GrcFinding["status"][] = ["GAP", "PARTIAL", "CUSTOMER_ACTION", "MET", "INFO", "NOT_APPLICABLE"];
 
 /**
- * Escapes ruleset or profile text for a Markdown table cell or line: the
- * output can neither break the table nor become HTML, a link or code.
+ * Escapes ruleset text for a Markdown table cell or line: the output cannot
+ * break the table or become HTML, an inline link, an image or code, and GFM
+ * autolinks (scheme://, www., e-mail) are defused with character references.
  */
 export function mdCell(value: unknown): string {
   const text = String(value ?? "")
@@ -24,7 +25,10 @@ export function mdCell(value: unknown): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/[\\|[\]`]/g, (c) => `\\${c}`);
+    .replace(/[\\|[\]`]/g, (c) => `\\${c}`)
+    .replace(/:\/\//g, ":&#47;&#47;")
+    .replace(/\b(www)\./gi, "$1&#46;")
+    .replace(/@/g, "&#64;");
 }
 
 export function packFilename(tenantId: string, rulesetVersion: string, ext: "md" | "json"): string {
@@ -33,7 +37,7 @@ export function packFilename(tenantId: string, rulesetVersion: string, ext: "md"
 }
 
 function citations(f: GrcFinding): string {
-  return f.citations.map((c) => `${mdCell(c.source)}${c.article ? `, ${mdCell(c.article)}` : ""} (${c.status})`).join("; ");
+  return f.citations.map((c) => `${mdCell(c.source)}${c.article ? `, ${mdCell(c.article)}` : ""} (${mdCell(c.status)})`).join("; ");
 }
 
 function facts(platformFacts: GrcAssessment["platformFacts"]): string {
@@ -87,7 +91,7 @@ export function buildReadinessPackMarkdown(assessment: GrcAssessment, ruleset: R
     out.push(`## ${mdCell(fw)}`, "", "| Status | Rule | Topic | Obligation | Rationale | Controls | Citations | Check |", "|---|---|---|---|---|---|---|---|");
     for (const f of applicable.filter((x) => x.framework === fw).sort(byStatus)) {
       const check = f.citationStatus === "verify" ? VERIFY_MARKER : "";
-      out.push(`| ${f.status} | ${mdCell(f.ruleId)} | ${mdCell(f.topic)} | ${mdCell(f.obligation)} | ${mdCell(f.rationale)} | ${f.controls.map(mdCell).join(", ")} | ${citations(f)} | ${check} |`);
+      out.push(`| ${mdCell(f.status)} | ${mdCell(f.ruleId)} | ${mdCell(f.topic)} | ${mdCell(f.obligation)} | ${mdCell(f.rationale)} | ${f.controls.map(mdCell).join(", ")} | ${citations(f)} | ${check} |`);
     }
     out.push("");
   }

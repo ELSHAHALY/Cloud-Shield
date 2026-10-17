@@ -37,11 +37,12 @@ const md = () => buildReadinessPackMarkdown(assessment, ruleset, "t-nile-02", "2
 const line = (text: string, id: string) => text.split("\n").find((l) => l.includes(id)) ?? "";
 
 describe("mdCell", () => {
-  it("keeps table structure and blocks HTML, links and code", () => {
+  it("keeps table structure and blocks HTML, inline links, images, code and autolinks", () => {
     expect(mdCell("a|b\r\nc\\d")).toBe("a\\|b c\\\\d");
     expect(mdCell("<img src=x onerror=1> & [x](javascript:1) `c`")).toBe("&lt;img src=x onerror=1&gt; &amp; \\[x\\](javascript:1) \\`c\\`");
     expect(mdCell(undefined)).toBe("");
     expect(mdCell("x".repeat(5000))).toHaveLength(2000);
+    expect(mdCell("see https://evil.example/login, WWW.evil.example or x@evil.example")).toBe("see https:&#47;&#47;evil.example/login, WWW&#46;evil.example or x&#64;evil.example");
   });
 });
 
@@ -79,6 +80,14 @@ describe("buildReadinessPackMarkdown", () => {
     const row = line(md(), "| EG-PDPL-CROSS-BORDER");
     expect(row).toContain("Transfer only \\| with a licence &lt;script&gt;alert(1)&lt;/script&gt;");
     expect(md()).not.toContain("<script>");
+    expect(row.split(" | ")).toHaveLength(8);
+  });
+
+  it("escapes status values so they cannot shift the columns", () => {
+    const hostile = { ...assessment, findings: [finding({ ruleId: "R-STATUS", status: "MET | x" as GrcFinding["status"], citations: [{ source: "s", status: "doc) | injected | cell" as "doc" }] })] };
+    const row = line(buildReadinessPackMarkdown(hostile, ruleset, "t", "x"), "| R-STATUS") || line(buildReadinessPackMarkdown(hostile, ruleset, "t", "x"), "R-STATUS");
+    expect(row).toContain("MET \\| x");
+    expect(row).toContain("doc) \\| injected \\| cell");
     expect(row.split(" | ")).toHaveLength(8);
   });
 

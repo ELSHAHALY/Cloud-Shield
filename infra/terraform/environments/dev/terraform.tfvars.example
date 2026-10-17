@@ -23,7 +23,7 @@ cognito_deletion_protection = false
 # ---- S3 ----
 log_archive_force_destroy    = true
 log_archive_object_lock_days = 0
-evidence_object_lock_days    = 0 # SOAR evidence Object Lock (GOVERNANCE); set before the FIRST apply, blocks teardown for N days
+evidence_object_lock_days    = 0 # SOAR evidence Object Lock (GOVERNANCE); set before the FIRST apply, blocks teardown for N days; changing it later REPLACES (and empties) the evidence bucket
 soar_notification_emails     = ["analyst@example.com"]
 soar_dry_run                 = true
 soar_min_severity            = 7

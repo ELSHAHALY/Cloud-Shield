@@ -32,6 +32,9 @@ PF=<number of the Phase F PR>            # issues and PRs share numbering; look 
 gh auth status && gh repo set-default "$REPO"
 gh api "repos/$REPO" --jq '{merge_commit: .allow_merge_commit, delete_branch_on_merge, allow_update_branch}'
 #   merge_commit must be true. delete_branch_on_merge should stay false (see §3).
+#   allow_update_branch reads false today. That setting controls the "Update branch" button;
+#   the API call in §2 is expected to work regardless [verify]. If it is refused, see §2.
+gh api "repos/$REPO/codeowners/errors?ref=feat/depi-phase-f-capstone-complete" --jq .errors   # must print []
 
 for n in 1 2 3 4 "$PF"; do
   gh pr view "$n" --json number,headRefName,baseRefName,headRefOid,isDraft,mergeable,reviewDecision \
@@ -63,7 +66,7 @@ done
    done                                    # no "FAIL-OPEN FIRED" line may appear
    ```
 
-5. **Two-person review by team policy.** Protection does not exist yet, so this is enforced by you. PRs #1–#4 and `$PF` are authored by @ahklsfg, whose own approval never counts, so **S1 and S2** approve each one:
+5. **Two-person review by team policy.** Protection does not exist yet, so this is enforced by you. A PR author's own approval never counts. PRs #1–#4 are authored by @ahklsfg, so **S1 and S2** approve each of them; for `$PF`, check the author first (`gh pr view "$PF" --json author --jq .author.login`), and the two team members who are **not** its author approve:
 
    ```bash
    gh pr review <n> --approve --body "Reviewed for the final merge (cutover runbook §0)."   # S1, then S2 on their machine
@@ -86,40 +89,65 @@ gh variable list --repo "$REPO"   # ENFORCE_GATES  true
 
 ## §2 The merge loop
 
-Run it for `N`=1, 2, 3 and 4, with `NEXT`=2, 3, 4 and `$PF`. Copy the helper once:
+Every step stops the loop on its first error: `main` has no protection yet, so a red check or a failed merge must never be followed by the next command. Copy both helpers once, in the same shell where `REPO` is set:
 
 ```bash
-# Wait until CI has registered on a given head SHA, then watch it to the end.
+# Wait (at most 15 min) until CI has registered on a head SHA, then watch it;
+# non-zero on any failing check or on timeout.
 wait_ci() {   # wait_ci <pr> <sha>
-  until [ "$(gh api "repos/$REPO/commits/$2/check-runs" --jq .total_count)" -gt 0 ]; do sleep 10; done
-  gh pr checks "$1" --watch --fail-fast --interval 15
+  local i
+  for i in $(seq 90); do
+    [ "$(gh api "repos/$REPO/commits/$2/check-runs" --jq .total_count)" -gt 0 ] && break
+    sleep 10
+  done
+  [ "$(gh api "repos/$REPO/commits/$2/check-runs" --jq .total_count)" -gt 0 ] || { echo "no CI on $2 after 15 min"; return 1; }
+  gh pr checks "$1" --watch --fail-fast --interval 15 || { echo "CI not green on PR #$1"; return 1; }
+}
+
+# Merge PR N, then retarget and update NEXT, and wait for NEXT's fresh CI.
+merge_pair() {   # merge_pair <N> <NEXT>
+  local N="$1" NEXT="$2" SHA OLD NEW i
+  SHA=$(gh pr view "$N" --json headRefOid --jq .headRefOid) || return 1
+  wait_ci "$N" "$SHA" || return 1                       # green on the exact head you merge
+  gh pr merge "$N" --merge --match-head-commit "$SHA" \
+    --subject "Merge PR #$N: $(gh pr view "$N" --json headRefName --jq .headRefName)" || return 1
+  #   no --delete-branch: this branch is still NEXT's base until the retarget below
+  [ "$(gh pr view "$N" --json state --jq .state)" = MERGED ] || { echo "PR #$N is not MERGED"; return 1; }
+  [ -n "$NEXT" ] || return 0                            # the last PR has no successor
+
+  gh pr edit "$NEXT" --base main || return 1            # explicit retarget
+  OLD=$(gh pr view "$NEXT" --json headRefOid --jq .headRefOid) || return 1
+  gh pr update-branch "$NEXT" || return 1               # merge commit "Merge branch 'main' into …" (never --rebase)
+  NEW="$OLD"
+  for i in $(seq 60); do                                # at most 5 min for the new head to appear
+    NEW=$(gh pr view "$NEXT" --json headRefOid --jq .headRefOid)
+    [ "$NEW" != "$OLD" ] && break
+    sleep 5
+  done
+  if [ "$NEW" = "$OLD" ]; then
+    # Either GitHub said "already up to date" (fine: the head already contains main)
+    # or the update did not happen (stop).
+    [ "$(gh api "repos/$REPO/compare/main...$NEW" --jq .behind_by)" = 0 ] || { echo "PR #$NEXT is behind main and was not updated"; return 1; }
+  fi
+  wait_ci "$NEXT" "$NEW" || return 1                    # fresh CI against the new main
+  gh pr view "$NEXT" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus'   # MERGEABLE CLEAN
 }
 ```
 
-For each pair:
+Then run the whole stack as one chain, which stops at the first failure:
 
 ```bash
-N=1; NEXT=2                                   # then 2/3, 3/4, 4/$PF
-SHA=$(gh pr view "$N" --json headRefOid --jq .headRefOid)
-wait_ci "$N" "$SHA"                           # all green on the exact head you are about to merge
-gh pr merge "$N" --merge --match-head-commit "$SHA" \
-  --subject "Merge PR #$N: $(gh pr view "$N" --json headRefName --jq .headRefName)"
-#   no --delete-branch: this branch is still NEXT's base until the next line runs
-
-gh pr edit "$NEXT" --base main                # explicit retarget
-OLD=$(gh pr view "$NEXT" --json headRefOid --jq .headRefOid)
-gh pr update-branch "$NEXT"                   # merge commit "Merge branch 'main' into …" (not --rebase)
-until NEW=$(gh pr view "$NEXT" --json headRefOid --jq .headRefOid) && [ "$NEW" != "$OLD" ]; do sleep 5; done
-wait_ci "$NEXT" "$NEW"                        # fresh CI against the new main
-gh pr view "$NEXT" --json mergeable,mergeStateStatus --jq '.mergeable, .mergeStateStatus'   # MERGEABLE
+merge_pair 1 2 && merge_pair 2 3 && merge_pair 3 4 && merge_pair 4 "$PF" && merge_pair "$PF" "" \
+  && echo "STACK MERGED" || echo "STOPPED: fix the reported problem, then resume from the failed pair"
 ```
 
-Then merge `$PF` the same way: `SHA=…; wait_ci "$PF" "$SHA"; gh pr merge "$PF" --merge --match-head-commit "$SHA" …`.
+To resume after a fix, run the remaining pairs only. For example, if `merge_pair 3 4` stopped after #3 merged but before #4 was updated, run `gh pr view 4 --json baseRefName,state` first, then continue from whichever step is not done yet.
 
 - **The race:** right after `update-branch`, `gh pr checks` can still report the old head, or no checks at all. That is why the loop waits for the new head SHA and for its check runs to exist before it watches.
 - **`--match-head-commit`** refuses the merge if someone pushed after you checked. If that happens, re-run `wait_ci` on the new head.
 - **On a conflict** (none expected, given §0.2), merge rather than rebase: `git fetch origin && git switch <branch> && git merge origin/main`, resolve, `git push`, then `wait_ci` again. Never force-push someone else's branch.
-- **`update-branch` says the branch is already up to date?** Then the head already contains `main`, and the CI already on that head tested exactly what will merge. Continue with `wait_ci "$NEXT" "$OLD"`. Never push an empty commit and never close and reopen to trigger CI.
+- **`update-branch` says the branch is already up to date?** Then the head already contains `main` (`merge_pair` checks `behind_by = 0`), and the CI already on that head tested exactly what will merge. Never push an empty commit and never close and reopen to trigger CI.
+- **`update-branch` refused** (for example because of the repo's update-branch setting, §0): either enable it (`gh api -X PATCH "repos/$REPO" -F allow_update_branch=true`), or merge `main` into the branch locally and push (the conflict path below). Then resume.
 
 ## §3 Check `main`, then delete the branches
 

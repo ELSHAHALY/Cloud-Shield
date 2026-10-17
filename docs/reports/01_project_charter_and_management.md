@@ -172,7 +172,7 @@ Phase labels C–F are the repository's own; labels A (scaffold) and B (SOAR eng
 
 Commit dates are from `git log --date=short --format='%ad %h %s'` on 17 Oct 2026. The PRs are stacked: each is based on the previous PR's branch, and against its base each is ahead by 5, 3, 8 and 8 commits respectively and behind by 0 [repo: docs/plans/depi-phase-f-capstone-complete.md F1]. Each phase branched from the previous phase's head rather than from `main`, so that later work could build on earlier work before review finished. The cost is that the PRs must merge in order and with merge commits: squash or rebase merges would create new commits that the next stacked branch does not contain, so its diff would replay the earlier PR, and the CI-tested head SHAs would disappear from `main`'s history [repo: docs/plans/depi-phase-f-capstone-complete.md D8].
 
-The design review, the first scaffold commits and the first independent audit are recorded in HANDOFF as 8 Oct work (commits `30ec367`, `ea39d48`, `67e414c`) [repo: docs/HANDOFF.md §2.1–§2.5]. Those commits are **not** in this repository's history: the history restarts at `1019669`, because the zip that carried the scaffold had no `.git` [repo: docs/HANDOFF.md §1]. The Gantt chart below uses git dates only, so the 8 Oct work does not appear in it.
+The design review, the first scaffold commits and the first independent audit are recorded in HANDOFF as 8 Oct work (commits `30ec367`, `ea39d48`, `67e414c`) [repo: docs/HANDOFF.md §2.1–§2.5]. Those commits are **not** in this repository's history: the scaffold history restarts at `1019669` (14 Oct), after a single `Initial commit` `9319208` (3 Oct), because the zip that carried the scaffold had no `.git` [repo: docs/HANDOFF.md §1]. The Gantt chart below uses git dates only, so the 8 Oct work does not appear in it.
 
 ### 1.5.3 Timeline (commit dates only)
 
@@ -238,7 +238,7 @@ Dates and deciders are from each ADR's header [repo: docs/adr/*.md, lines 3–4]
 
 ### 1.6.2 Review rules
 
-- **Two approvals.** Branch protection on `main` requires 2 approvals; that is what makes review two-person [repo: README.md §3; .github/CODEOWNERS L11–14].
+- **Two approvals.** After the cutover ([final-merge-and-cutover.md](../runbooks/final-merge-and-cutover.md) §4), branch protection on `main` requires 2 approvals; that is what makes review two-person [repo: README.md §3; .github/CODEOWNERS L11–14].
 - **Code-owner review.** Required on `main` after the cutover. Every path now has at least two owners from different roles (D11), so a PR author is never the only possible code owner [repo: .github/CODEOWNERS L16–18].
 - **Before protection exists**, the team policy is the same: every PR is approved by the two members who did not author it [repo: docs/plans/depi-phase-f-capstone-complete.md §4 "§0 Preconditions"].
 - **Merge method.** Merge commits only, strictly in the order #1 → #2 → #3 → #4 → the Phase F PR, with an explicit retarget and update-branch after each merge. This keeps every audited, CI-tested head SHA on `main` [repo: docs/plans/depi-phase-f-capstone-complete.md D8]. The steps are in the [cutover runbook](../runbooks/final-merge-and-cutover.md).

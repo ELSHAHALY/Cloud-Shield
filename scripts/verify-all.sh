@@ -18,6 +18,8 @@
 # Exit:   0 all selected domains passed (or skipped, under VERIFY_ALLOW_SKIP)
 #         1 a check failed   2 a prerequisite is missing / bad usage
 #         3 the working tree changed during the run (a bug in this script)
+#         (3 wins over 1: a run that changed the tree proves nothing. SIGTERM
+#         and SIGINT are acted on once the running child command returns.)
 #
 # The tree is never edited: terraform runs on a scratch copy, `fmt` only
 # checks, zips go to the scratch dir. Logs stay in $TMPDIR/cloudshield-verify.*.
@@ -32,7 +34,7 @@ PY="${PYTHON:-python3}"
 
 # Pins this script compares against or runs (keep in step with ci.yml / Makefile).
 PIN_TF="1.16.5"; PIN_GITLEAKS="8.30.1"; PIN_CHECKOV="3.3.26"; PIN_RUFF="0.17.0"
-PIN_NODE_MAJOR="24"; PIN_PY="3.13"; PIN_MOTO="5.2.4"
+PIN_NODE_MAJOR="24"; PIN_PY="3.13"; PIN_MOTO="5.2.4"; PIN_PYTEST="9.1.1"; PIN_BOTO3="1.43.113"; PIN_HADOLINT="2.14.0"
 MOTO_IMAGE="motoserver/moto:5.2.4@sha256:120b1589c6df7e35d2092935f6ff724486bb2c4189d0e36ce795baba1400ffd2"
 HADOLINT_IMAGE="hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
 ACTIONLINT_IMAGE="rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
@@ -45,7 +47,7 @@ else
   C_OK=""; C_BAD=""; C_WARN=""; C_DIM=""; C_B=""; C_0=""
 fi
 
-usage() { sed -n '11,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '11,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 # --- selection ---------------------------------------------------------------
 SELECTED=""
@@ -111,11 +113,11 @@ cleanup() {
 }
 
 summary() {
-  local d r dur facts colour sym total
+  local d r dur facts colour sym total log
   [ "$SUMMARY_DONE" = 1 ] && return; SUMMARY_DONE=1
   total=$(( $(date +%s) - START_ALL ))
   printf '\n%s== verify-all summary ==%s\n' "$C_B" "$C_0"
-  printf '%-12s   %-12s %6s  %s\n' "domain" "result" "time" "facts"
+  printf '%-12s   %-12s %6s  %-16s %s\n' "domain" "result" "time" "log" "facts"
   for d in $ALL_DOMAINS; do
     r="$(get_var RES "$d")"; dur="$(get_var DUR "$d")"; facts="$(get_var FACTS "$d")"
     if [ -z "$r" ]; then
@@ -126,7 +128,8 @@ summary() {
       PASS) colour="$C_OK"; sym="✓" ;; FAIL) colour="$C_BAD"; sym="✗" ;;
       SKIP) colour="$C_WARN"; sym="-" ;; *) colour="$C_DIM"; sym=" " ;;
     esac
-    printf '%s%-12s %s %-12s%s %6s  %s\n' "$colour" "$d" "$sym" "$r" "$C_0" "${dur:+${dur}s}" "$facts"
+    log=""; [ -f "$LOGDIR/$d.log" ] && log="$d.log"
+    printf '%s%-12s %s %-12s%s %6s  %-16s %s\n' "$colour" "$d" "$sym" "$r" "$C_0" "${dur:+${dur}s}" "$log" "$facts"
   done
   [ -n "$WARNINGS" ] && printf '\n%sWarnings%s\n%s' "$C_WARN" "$C_0" "$WARNINGS"
   printf '\nNot covered here (CI is the authority): semgrep, trivy fs, trivy image + SBOM, ZAP.\n'
@@ -149,8 +152,10 @@ summary() {
 on_exit() {
   local rc=$?
   [ "$FINAL_RC" = 0 ] && FINAL_RC=$rc
-  trap - EXIT INT TERM
+  trap '' INT TERM            # a second Ctrl-C must not abort the teardown
+  trap - EXIT
   cleanup
+  rm -rf "$WORK/tf" "$WORK"/soar-*.zip 2>/dev/null || true   # keep only the logs
   if [ "$(tree_state)" != "$TREE_BEFORE" ]; then
     FINAL_RC=3
     printf '\n%sThe working tree changed during the run:%s\n' "$C_BAD" "$C_0"
@@ -210,6 +215,8 @@ preflight() {
     have ruff && version_warn ruff "$(ruff --version 2>/dev/null | awk '{print $2}')" "$PIN_RUFF"
     have "$PY" && version_warn python "$("$PY" -c 'import platform; print(platform.python_version())' 2>/dev/null)" "$PIN_PY"
     py_ok && version_warn moto "$("$PY" -c 'import moto; print(moto.__version__)' 2>/dev/null)" "$PIN_MOTO"
+    py_ok && version_warn pytest "$("$PY" -c 'import pytest; print(pytest.__version__)' 2>/dev/null)" "$PIN_PYTEST"
+    py_ok && version_warn boto3 "$("$PY" -c 'import boto3; print(boto3.__version__)' 2>/dev/null)" "$PIN_BOTO3"
   fi
   local d
   for d in docs-api spa local-smoke; do
@@ -217,7 +224,7 @@ preflight() {
   done
   for d in docs-api local-smoke; do
     is_selected "$d" && need "$d" "Docker daemon running" "start Docker (docker info must succeed)" docker_ok
-    is_selected "$d" && need "$d" "host port 5000 free (moto)" "make local-down; docker stop cloudshield-moto" port_free 5000
+    is_selected "$d" && need "$d" "host port 5000 free (moto)" "make local-down; docker stop cloudshield-moto; on macOS turn off AirPlay Receiver (System Settings → General → AirDrop & Handoff)" port_free 5000
   done
   if is_selected local-smoke; then
     need local-smoke "docker compose ≥ 2.20" "update Docker Desktop / the compose plugin" compose_ok
@@ -227,6 +234,7 @@ preflight() {
     need checkov "checkov on PATH" "pip install checkov==$PIN_CHECKOV" have checkov
     need checkov "hadolint on PATH or Docker running" "start Docker, or install hadolint v2.14.0" hadolint_ok
     have checkov && version_warn checkov "$(checkov --version 2>/dev/null)" "$PIN_CHECKOV"
+    have hadolint && version_warn hadolint "$(hadolint --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" "$PIN_HADOLINT"
   fi
   if is_selected gitleaks; then
     need gitleaks "gitleaks on PATH" "install gitleaks $PIN_GITLEAKS" have gitleaks
@@ -248,7 +256,7 @@ dom_terraform() {
   # detection/ too: modules/detection catalogues ../../../../detection/athena-queries.
   note "copy infra/terraform + detection/ to a scratch dir (init writes .terraform/ and lock files there)"
   (cd "$REPO" && git ls-files -co --exclude-standard -z infra/terraform detection \
-    | while IFS= read -r -d '' f; do [ -e "$f" ] && printf '%s\0' "$f"; done \
+    | while IFS= read -r -d '' f; do if [ -e "$f" ]; then printf '%s\0' "$f"; fi; done \
     | tar --null -T - -cf -) | tar -xf - -C "$tf" || return 1
   run terraform "terraform fmt -check -recursive" terraform -chdir="$tf" fmt -check -recursive -diff infra/terraform || return 1
   for dir in "$tf"/infra/terraform/bootstrap "$tf"/infra/terraform/environments/*/ "$tf"/infra/terraform/modules/*/; do
@@ -331,12 +339,14 @@ dom_gitleaks() {
   run_in gitleaks . "gitleaks git (full history, redacted)" gitleaks git . --redact --verbose --exit-code 1
 }
 
+# The glob is expanded here, inside run_in's `cd`, so the caller's cwd never matters.
+actionlint_workflows() {
+  set -- .github/workflows/*.yml
+  if have actionlint; then actionlint "$@"
+  else docker run --rm -v "$REPO:/repo:ro" -w /repo "$ACTIONLINT_IMAGE" "$@"; fi
+}
 dom_actionlint() {
-  if have actionlint; then
-    run_in actionlint . "actionlint" actionlint .github/workflows/*.yml
-  else
-    run_in actionlint . "actionlint (docker, pinned)" docker run --rm -v "$REPO:/repo:ro" -w /repo "$ACTIONLINT_IMAGE" .github/workflows/*.yml
-  fi
+  run_in actionlint . "actionlint$(have actionlint || echo ' (docker, pinned)')" actionlint_workflows
 }
 
 dom_local_smoke() {

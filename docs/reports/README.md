@@ -71,7 +71,7 @@ The plan PDF, the DEPI Fall 2026 rubric and WBS Chapter 7 are not in the reposit
 3. **Previous records are labelled.** Figures from HANDOFF §13 are cited `[HANDOFF §13]` and called "previous record". Chapter 07 §3 re-measures them in Phase F and gives the new figures with a `[local: …]` or `[CI: …]` mark.
 4. **Every MTTC figure states its class** (M0–M4, §5). Only M3 and M4 would be MTTC on AWS, and neither exists yet.
 5. **Seeded numbers are called "seeded".** Golden-fixture numbers are called "synthetic oracle" and are never reported as a result.
-6. **No statistics, market figures or prices from external sources.** Prices appear only as figures this repository already states (with their citation) or as `[verify: AWS pricing page, accessed —]` placeholders (chapter 01 §8).
+6. **No statistics, market figures or prices from external sources.** Prices appear only as figures this repository already states (with their citation) or as `[verify: AWS pricing page, accessed —]` placeholders (chapter 01 §1.8).
 7. **Placeholders are visible.** Pending data appears as table cells reading `PENDING (first lab apply)`, each with the command that fills it.
 8. **Gaps in the source material are visible.** Content that only the plan PDF, the rubric or the WBS holds is a row with the `[source: plan PDF, not in repo — team to verify]` mark and an empty content cell.
 

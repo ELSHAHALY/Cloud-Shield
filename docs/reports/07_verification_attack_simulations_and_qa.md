@@ -169,7 +169,7 @@ This section is filled by the Validator from the final Phase F `make verify-all`
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
 | `docker compose -f docker-compose.local.yml config -q` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | valid (CI `gate: app` step) [CI: run 38984704551, PR #4, 9adc96d] |
-| `make local-up` then `make local-smoke` (8 checks [repo: app/local-dev/src/smoke.ts L36–L64]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: n/8 --> | <!-- VALIDATOR-FILL: verify-all, or "sandbox-blocked; CI app-smoke run <id> is the authority" --> | 8/8 [HANDOFF §13]; CI `app-smoke` green [CI: run 38984704551, PR #4, 9adc96d] |
+| `make local-up` then `make local-smoke` (8 checks [repo: app/local-dev/src/smoke.ts L36–L66]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: n/8 --> | <!-- VALIDATOR-FILL: verify-all, or "sandbox-blocked; CI app-smoke run <id> is the authority" --> | 8/8 [HANDOFF §13]; CI `app-smoke` green [CI: run 38984704551, PR #4, 9adc96d] |
 
 ### 3.9 Gates covered only by CI
 
@@ -193,7 +193,7 @@ Each phase was closed by the same pipeline: Planner → Builder → Independent 
 
 | Phase | Branch / PR | Verdict | Findings | Source |
 |---|---|---|---|---|
-| Scaffold | `main` (`67e414c`) | PASS WITH FIXES | 10 major, 10 minor; all major fixed | [HANDOFF §2.5] |
+| Scaffold | `main` (`67e414c`, recorded in HANDOFF; not in this history [repo: docs/HANDOFF.md §1]) | PASS WITH FIXES | 10 major, 10 minor; all major fixed | [HANDOFF §2.5] |
 | SOAR engine | `feat/s3-soar-playbooks` / #1 | PASS WITH FIXES | 3 major, 9 minor; all addressed | [HANDOFF §10] |
 | Phase C (detection, hunting, sims) | `feat/s3-detection-athena-sims` / #2 | PASS WITH FIXES | 1 major, 5 minor; all fixed | [HANDOFF §11] |
 | Phase D (edge, identity, WAF, PB-04/05) | `feat/s1-s2-edge-identity-waf` / #3 | FAIL → fixed | 2 major, 9 minor | [HANDOFF §12] |
@@ -393,7 +393,7 @@ The percentiles are computed with the nearest-rank rule above. With a small n, p
 
 ### 7.1 Functional: the local smoke run
 
-`make local-smoke` runs eight checks through nginx at `http://localhost:3000` [repo: app/local-dev/src/smoke.ts L36–L64]:
+`make local-smoke` runs eight checks through nginx at `http://localhost:3000` [repo: app/local-dev/src/smoke.ts L36–L66]:
 
 | # | Check (as printed) | What it shows |
 |---|---|---|

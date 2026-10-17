@@ -64,9 +64,9 @@ If the slot is shorter, cut slides 7, 13 and 15 to one sentence each (their cont
 - **Talking points:**
   1. Shift-left: a GitHub Actions pipeline of security gates [repo: .github/workflows/ci.yml].
   2. Shift-right: GuardDuty → EventBridge → Step Functions `cs-ir-router` → Lambda playbooks, all behind a fail-closed safety guard [repo: soar/README.md].
-  3. The loops are linked: the SOC posture banner shows the build gates; the image is pushed only when the gates really passed; the PB-03 IR report emits a Terraform snippet that feeds back into the code (chapter 02 §5(a)).
+  3. The loops are linked: the SOC posture banner shows the build gates; the image is pushed only when the gates really passed; the PB-03 IR report emits a Terraform snippet that feeds back into the code (chapter 02 §2.5(a)).
 - **Speaker:** S1.
-- **Source:** chapter 01 §1.2; chapter 02 §5; chapter 03 §1.1.
+- **Source:** chapter 01 §1.2; chapter 02 §2.5; chapter 03 §1.1.
 
 ### Slide 3: Honest status: built, audited, not yet applied
 - **Takeaway:** everything is built, tested and independently audited, and nothing has been applied to AWS, so no AWS measurement exists.

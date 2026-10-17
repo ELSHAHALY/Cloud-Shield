@@ -365,7 +365,7 @@ It does not, on its own, defeat a principal who can write both the evidence obje
 | 8 | IP-set recreation drops every block | Rows still say `active`; `make expired-blocks` reports them as lost | Accepted for the lab; re-block by hand | [repo: docs/adr/0005-pb04-pb05-edge-and-ecs-containment.md "Consequences" A11] |
 | 9 | PB-02 cannot revoke sessions of roles the user assumed | Those sessions remain valid | Documented, not handled | [repo: soar/playbooks/pb02_iam_key_revoke.py L13–14] |
 | 10 | Lambda reserved concurrency is unreserved by default | No per-playbook concurrency cap on a new account | Set 5 once the account quota allows | [repo: infra/terraform/modules/soar/variables.tf L112–115; docs/adr/0002-module-map-and-scaffold-strategy.md §5] |
-| 11 | No case management or enrichment | Analysts work from the incident row, SNS/ChatOps and the IR report | Out of scope (chapter 02 §5) | [repo: docs/plans/depi-phase-f-capstone-complete.md §6.3 "02" item 5c] |
+| 11 | No case management or enrichment | Analysts work from the incident row, SNS/ChatOps and the IR report | Out of scope (chapter 02 §2.5) | [repo: docs/plans/depi-phase-f-capstone-complete.md §6.3 "02" item 5c] |
 | 12 | Nothing applied to AWS | Every runtime claim above is design intent | The verify-on-first-apply lists in ADR-0004 §9, ADR-0005 and ADR-0006, consolidated in chapter 07 §9 | [repo: docs/HANDOFF.md §1, §12, §13] |
 
 ### 10.1 Rubric mapping
