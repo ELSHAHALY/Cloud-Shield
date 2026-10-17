@@ -94,7 +94,7 @@ This section was filled by the Validator from the final Phase F `make verify-all
 | Tool versions vs CI pins, including any WARN (for example ruff vs the 0.17.0 pin [repo: soar/requirements-dev.txt L6]) | Terraform 1.16.5, Checkov 3.3.26, gitleaks 8.30.1, Python 3.13.16, Node 24.22.0, moto 5.2.4 (all = CI pins); hadolint v2.14.0 and actionlint 1.7.12 as digest-pinned images; Docker 29.8.2, Compose 5.6.0. **WARN:** ruff 0.16.8 vs the CI pin 0.17.0 (CI ran 0.17.0 green) |
 | verify-all exit code and RESULT line | exit 0; `RESULT: PASS after 544s`; working tree unchanged (no exit 3). Not covered (CI authority): Semgrep, Trivy fs, Trivy image + SBOM, ZAP. local-smoke ran with `VERIFY_COMPOSE_NO_BUILD=1` on images rebuilt from this commit with the proxy CA as a BuildKit secret (the sandbox intercepts TLS); the committed Dockerfiles are unchanged and CI `app-smoke` builds them as committed |
 | Log directory | `$TMPDIR/cloudshield-verify.CKsndH/logs/` in the sandbox (not kept with the repo) |
-| Phase F PR CI run | <!-- CI-FILL --> |
+| Phase F PR CI run | run 38993019051, PR #5, head `a89c244` (the Validator's fill commit after it is CI-checked again; see Appendix B): **success**; every gate job green, every `Report (fail-open)` step skipped, `app-smoke` green, `dast` and `terraform plan` skipped by design |
 
 ### 3.1 Terraform
 
@@ -168,10 +168,10 @@ This section was filled by the Validator from the final Phase F `make verify-all
 
 | Gate | PR #1 | PR #2 | PR #3 | PR #4 | Phase F PR |
 |---|---|---|---|---|---|
-| `gate: sast (semgrep)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- CI-FILL --> |
-| `gate: sca (trivy fs)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- CI-FILL --> |
-| `gate: image (trivy image + sbom)` | job pass, Trivy step skipped (no Dockerfile yet) [CI: run 38478422214, PR #1, b28c75d] | as #1 [CI: run 38486109181, PR #2, 7d6c677] | as #1 [CI: run 38930049163, PR #3, 247643a] | pass; 0 fixable CRITICAL/HIGH [CI: run 38984704551, PR #4, 9adc96d; HANDOFF §13] | <!-- CI-FILL --> |
-| `gate: dast (zap baseline)` | skipped on PRs (by design) | skipped | skipped | skipped | <!-- CI-FILL --> |
+| `gate: sast (semgrep)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [CI: run 38993019051, PR #5, a89c244] |
+| `gate: sca (trivy fs)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [CI: run 38993019051, PR #5, a89c244] |
+| `gate: image (trivy image + sbom)` | job pass, Trivy step skipped (no Dockerfile yet) [CI: run 38478422214, PR #1, b28c75d] | as #1 [CI: run 38486109181, PR #2, 7d6c677] | as #1 [CI: run 38930049163, PR #3, 247643a] | pass; 0 fixable CRITICAL/HIGH [CI: run 38984704551, PR #4, 9adc96d; HANDOFF §13] | pass; Trivy image scan step succeeded (fail-open report skipped), SBOM uploaded [CI: run 38993019051, PR #5, a89c244] |
+| `gate: dast (zap baseline)` | skipped on PRs (by design) | skipped | skipped | skipped | skipped on PRs (by design) |
 
 The Semgrep run on PR #4 reported 95 rules and 0 findings. That was the first run of the `p/typescript` and `p/react` packs [HANDOFF §13].
 
@@ -646,7 +646,7 @@ RESULT: PASS after 544s
 | #2 `feat/s3-detection-athena-sims` | `7d6c677` | 38486109181 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38486109181 |
 | #3 `feat/s1-s2-edge-identity-waf` | `247643a` | 38930049163 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38930049163 |
 | #4 `feat/s2-app-soc-ui-grc` | `9adc96d` | 38984704551 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38984704551 |
-| Phase F PR `feat/depi-phase-f-capstone-complete` | <!-- CI-FILL --> | <!-- CI-FILL --> | <!-- CI-FILL --> |
+| Phase F PR `feat/depi-phase-f-capstone-complete` | `a89c244` | 38993019051 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38993019051 |
 
 Run ids and heads are from [repo: docs/plans/depi-phase-f-capstone-complete.md F1, F2]. In each listed run, the gate jobs succeeded and the `Report (fail-open)` steps were skipped.
 

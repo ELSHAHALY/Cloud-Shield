@@ -569,7 +569,7 @@ Only one WARN: ruff 0.16.8 against the CI pin 0.17.0. Semgrep, Trivy and ZAP are
 - `VERIFY_COMPOSE_NO_BUILD` exists for offline rehearsals;
 - Python ≥ 3.12 is accepted with a WARN, where CI pins 3.13.
 
-**Phase F PR CI:** <!-- CI-FILL -->
+**Phase F PR CI:** [PR #5](https://github.com/ELSHAHALY/Cloud-Shield/pull/5) (base `feat/s2-app-soc-ui-grc`, author @ahklsfg), run [38993019051](https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38993019051) on `a89c244`: **success**. All seven gate jobs (secrets, sast, sca, iac, soar, app, image) and `app-smoke` passed, with every `Report (fail-open)` step skipped, so the scans really passed. `gate: dast` and `terraform plan (dev)` were skipped by design. `GET /codeowners/errors` on the branch returns `[]`.
 
 ### Not proven
 
