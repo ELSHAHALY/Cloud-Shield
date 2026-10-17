@@ -5,7 +5,7 @@
 | Chapter | 07 |
 | Version | 1.0 |
 | Date | 17 Oct 2026 |
-| Status | DRAFT (section 3 and Appendix A are completed by the Validator after the final `make verify-all` run) |
+| Status | DRAFT; section 3 and Appendix A filled by the Validator from the final Phase F `make verify-all` run (`b287a39`, 17 Oct 2026) |
 | Owners | All three: S1 @ELSHAHALY (pipeline, Terraform and verify-all evidence), S2 @YasseenAbdelghany (application QA), S3 @ahklsfg (attack simulations, MTTC, chain of custody) |
 | Reviewers | The two owners who did not write a section review it; the Independent Auditor reviews the whole chapter |
 
@@ -82,106 +82,96 @@ MTTC has its own classes, defined in section 6.1: M0 synthetic oracle, M1 seeded
 
 ## 3. Results, measured
 
-This section is filled by the Validator from the final Phase F `make verify-all` run and from the CI run on the Phase F PR. Until then, every result and number cell holds the marker below. The "previous record" column repeats the last recorded figures from HANDOFF §13. Those were taken on local Linux after the Phase E audit fixes, with CI on PR #4 green [HANDOFF §13]. They are context only and are never a Phase F result.
+This section was filled by the Validator from the final Phase F `make verify-all` run (commit `b287a39`, after the audit fixes) and from the CI run on the Phase F PR. The "previous record" column repeats the last recorded figures from HANDOFF §13. Those were taken on local Linux after the Phase E audit fixes, with CI on PR #4 green [HANDOFF §13]. They are context only and are never a Phase F result.
 
 **Run metadata**
 
-<!-- VALIDATOR-FILL -->
 | Item | Value |
 |---|---|
-| Commit SHA (and dirty flag) | <!-- VALIDATOR-FILL --> |
-| Date and time (UTC) | <!-- VALIDATOR-FILL --> |
-| Environment (`uname -sm`, sandbox or laptop) | <!-- VALIDATOR-FILL --> |
-| Tool versions vs CI pins, including any WARN (for example ruff vs the 0.17.0 pin [repo: soar/requirements-dev.txt L6]) | <!-- VALIDATOR-FILL --> |
-| verify-all exit code and RESULT line | <!-- VALIDATOR-FILL --> |
-| Log directory | <!-- VALIDATOR-FILL --> |
-| Phase F PR CI run | <!-- VALIDATOR-FILL: run id, PR number, head SHA --> |
+| Commit SHA (and dirty flag) | `b287a39` (clean: no dirty flag in the header) |
+| Date and time (UTC) | 2026-10-17T01:46:39Z to 01:55:43Z (544 s) |
+| Environment (`uname -sm`, sandbox or laptop) | `Linux x86_64`, the Claude Code build sandbox (not a team laptop) |
+| Tool versions vs CI pins, including any WARN (for example ruff vs the 0.17.0 pin [repo: soar/requirements-dev.txt L6]) | Terraform 1.16.5, Checkov 3.3.26, gitleaks 8.30.1, Python 3.13.16, Node 24.22.0, moto 5.2.4 (all = CI pins); hadolint v2.14.0 and actionlint 1.7.12 as digest-pinned images; Docker 29.8.2, Compose 5.6.0. **WARN:** ruff 0.16.8 vs the CI pin 0.17.0 (CI ran 0.17.0 green) |
+| verify-all exit code and RESULT line | exit 0; `RESULT: PASS after 544s`; working tree unchanged (no exit 3). Not covered (CI authority): Semgrep, Trivy fs, Trivy image + SBOM, ZAP. local-smoke ran with `VERIFY_COMPOSE_NO_BUILD=1` on images rebuilt from this commit with the proxy CA as a BuildKit secret (the sandbox intercepts TLS); the committed Dockerfiles are unchanged and CI `app-smoke` builds them as committed |
+| Log directory | `$TMPDIR/cloudshield-verify.CKsndH/logs/` in the sandbox (not kept with the repo) |
+| Phase F PR CI run | <!-- CI-FILL --> |
 
 ### 3.1 Terraform
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `terraform fmt -check -recursive -diff infra/terraform` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: [local: verify-all 2026-10-17, <sha>, sandbox] --> | fmt clean [HANDOFF §13] |
-| `terraform validate` on the bootstrap, `environments/dev` and 9 modules | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | 11/11 [HANDOFF §13] |
-| `terraform test`, all module directories with `tests/` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | 110/110 [HANDOFF §13] |
-| `terraform test` per module | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42 [HANDOFF §13] |
+| `terraform fmt -check -recursive -diff infra/terraform` | pass | no diff | [local: verify-all 2026-10-17, b287a39, sandbox] | fmt clean [HANDOFF §13] |
+| `terraform validate` on the bootstrap, `environments/dev` and 9 modules | pass | 11/11 valid (deprecation warnings only: `hash_key` on two DynamoDB tables) | [local: verify-all 2026-10-17, b287a39, sandbox] | 11/11 [HANDOFF §13] |
+| `terraform test`, all module directories with `tests/` | pass | 110 passed, 0 failed | [local: verify-all 2026-10-17, b287a39, sandbox] | 110/110 [HANDOFF §13] |
+| `terraform test` per module | pass | compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42 | [local: verify-all 2026-10-17, b287a39, sandbox] | compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42 [HANDOFF §13] |
 
 ### 3.2 SOAR (Python)
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `ruff check . ../scripts/package_soar.py` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `ruff format --check . ../scripts/package_soar.py` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `python -m pytest --cov` (gate `fail_under = 95` [repo: soar/pyproject.toml L31]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: tests passed, TOTAL coverage % --> | <!-- VALIDATOR-FILL --> | coverage 97.6 %; the test count is not recorded in §13 [HANDOFF §13]; 622 tests at 97.45 % after Phase D [HANDOFF §12] |
-| Package determinism: `scripts/package_soar.py` built twice, SHA-256 compared | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: both digests --> | <!-- VALIDATOR-FILL --> | byte-identical [HANDOFF §10, §12] |
-| ATT&CK export: `python -m tools.export_attack_table --check ../app/docs-api/src/soc/attack-table.generated.json` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | in sync (CI step, [CI: run 38984704551, PR #4, 9adc96d]) |
+| `ruff check . ../scripts/package_soar.py` | pass (ruff 0.16.8, WARN) | All checks passed | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `ruff format --check . ../scripts/package_soar.py` | pass | 57 files already formatted | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `python -m pytest --cov` (gate `fail_under = 95` [repo: soar/pyproject.toml L31]) | pass | 711 passed in 242.88 s; TOTAL 2528 statements / 43 missed, 710 branches / 35 partial: 98 % as printed, 97.6 % exact (3160 / 3238); gate 95 % | [local: verify-all 2026-10-17, b287a39, sandbox] | coverage 97.6 %; the test count is not recorded in §13 [HANDOFF §13]; 622 tests at 97.45 % after Phase D [HANDOFF §12] |
+| Package determinism: `scripts/package_soar.py` built twice, SHA-256 compared | pass | both builds `21c481c9faa9f5a3b1b43dc3bb4aff68e045c39bd7953a5cfc831d2caa9b7f25` | [local: verify-all 2026-10-17, b287a39, sandbox] | byte-identical [HANDOFF §10, §12] |
+| ATT&CK export: `python -m tools.export_attack_table --check ../app/docs-api/src/soc/attack-table.generated.json` | pass | in sync | [local: verify-all 2026-10-17, b287a39, sandbox] | in sync (CI step, [CI: run 38984704551, PR #4, 9adc96d]) |
 
 ### 3.3 docs-api (TypeScript API)
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `npm run lint -- --max-warnings 0` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `npm run typecheck` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `npm run openapi:check` (contract drift) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | in sync [HANDOFF §13] |
-| Jest with coverage against moto (gates 90 / 90 / 90 / 85 [repo: app/docs-api/jest.config.js L7]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: tests, suites, % lines, % branches --> | <!-- VALIDATOR-FILL --> | 290 tests / 17 suites; 94.5 % lines, 86.8 % branches [HANDOFF §13] |
+| `npm run lint -- --max-warnings 0` | pass | 0 warnings | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `npm run typecheck` | pass | 0 errors | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `npm run openapi:check` (contract drift) | pass | in sync | [local: verify-all 2026-10-17, b287a39, sandbox] | in sync [HANDOFF §13] |
+| Jest with coverage against moto (gates 90 / 90 / 90 / 85 [repo: app/docs-api/jest.config.js L7]) | pass | 290 tests / 17 suites; statements 93.79 %, branches 86.78 %, functions 93.12 %, lines 94.48 % | [local: verify-all 2026-10-17, b287a39, sandbox] | 290 tests / 17 suites; 94.5 % lines, 86.8 % branches [HANDOFF §13] |
 
 ### 3.4 SPA (React)
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `npm run lint` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `npm run typecheck` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `npm run test:coverage` (Vitest; gates 80 / 80 / 80 / 75 [repo: app/spa/vitest.config.ts L15]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: tests, % lines --> | <!-- VALIDATOR-FILL --> | 50 tests; 96.3 % lines [HANDOFF §13]. Phase F adds the readiness-pack tests, so the count is expected to change |
-| Production build with `VITE_AUTH_MODE=cognito`, `check-bundle.mjs`, and no `local-idp` in `dist/` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | green in CI `gate: app` [CI: run 38984704551, PR #4, 9adc96d] |
+| `npm run lint` | pass | 0 warnings | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `npm run typecheck` | pass | 0 errors | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `npm run test:coverage` (Vitest; gates 80 / 80 / 80 / 75 [repo: app/spa/vitest.config.ts L15]) | pass | 63 tests / 8 files (13 new readiness-pack tests); statements 94.9 %, branches 86.54 %, functions 94.33 %, lines 96.56 %. verify-all runs CI's `npx vitest run --coverage`, the same thresholds | [local: verify-all 2026-10-17, b287a39, sandbox] | 50 tests; 96.3 % lines [HANDOFF §13]. Phase F adds the readiness-pack tests, so the count is expected to change |
+| Production build with `VITE_AUTH_MODE=cognito`, `check-bundle.mjs`, and no `local-idp` in `dist/` | pass | bundle check passed; no `local-idp` in `dist/` | [local: verify-all 2026-10-17, b287a39, sandbox] | green in CI `gate: app` [CI: run 38984704551, PR #4, 9adc96d] |
 
 ### 3.5 local-dev tooling
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| lint, typecheck | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
-| `npx jest --ci` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | 5 tests [HANDOFF §13] |
+| lint, typecheck | pass | 0 warnings, 0 errors | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
+| `npx jest --ci` | pass | 5 tests / 2 suites (against a fresh moto, as CI's `gate: app`) | [local: verify-all 2026-10-17, b287a39, sandbox] | 5 tests [HANDOFF §13] |
 
 ### 3.6 Checkov and hadolint
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `checkov -d infra/terraform --framework terraform --quiet --compact --download-external-modules false` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: passed / failed / skipped --> | <!-- VALIDATOR-FILL --> | 953 passed, 0 failed [HANDOFF §13] |
-| `checkov -d app --framework dockerfile --quiet --compact` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: passed / failed --> | <!-- VALIDATOR-FILL --> | 202 passed, 0 failed [HANDOFF §13] |
-| hadolint on the 3 Dockerfiles (`app/docs-api`, `app/spa`, `app/local-dev`) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
+| `checkov -d infra/terraform --framework terraform --quiet --compact --download-external-modules false` | pass | 953 passed / 0 failed / 121 skipped (inline `#checkov:skip` with reasons) | [local: verify-all 2026-10-17, b287a39, sandbox] | 953 passed, 0 failed [HANDOFF §13] |
+| `checkov -d app --framework dockerfile --quiet --compact` | pass | 202 passed / 0 failed / 0 skipped (same counts with `node_modules` present) | [local: verify-all 2026-10-17, b287a39, sandbox] | 202 passed, 0 failed [HANDOFF §13] |
+| hadolint on the 3 Dockerfiles (`app/docs-api`, `app/spa`, `app/local-dev`) | pass | 0 findings (pinned image v2.14.0) | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
 
 ### 3.7 Gitleaks and actionlint
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `gitleaks git . --redact --verbose --exit-code 1` (full history) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: commits scanned, leaks --> | <!-- VALIDATOR-FILL --> | no leaks [HANDOFF §13] |
-| `actionlint .github/workflows/*.yml` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | clean [HANDOFF §13] |
+| `gitleaks git . --redact --verbose --exit-code 1` (full history) | pass | 30 commits scanned, no leaks found | [local: verify-all 2026-10-17, b287a39, sandbox] | no leaks [HANDOFF §13] |
+| `actionlint .github/workflows/*.yml` | pass | 0 findings (1.7.12, pinned image) | [local: verify-all 2026-10-17, b287a39, sandbox] | clean [HANDOFF §13] |
 
 ### 3.8 Local end-to-end
 
-<!-- VALIDATOR-FILL -->
 | Check | Result | Numbers | Source | Previous record |
 |---|---|---|---|---|
-| `docker compose -f docker-compose.local.yml config -q` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | valid (CI `gate: app` step) [CI: run 38984704551, PR #4, 9adc96d] |
-| `make local-up` then `make local-smoke` (8 checks [repo: app/local-dev/src/smoke.ts L36–L66]) | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL: n/8 --> | <!-- VALIDATOR-FILL: verify-all, or "sandbox-blocked; CI app-smoke run <id> is the authority" --> | 8/8 [HANDOFF §13]; CI `app-smoke` green [CI: run 38984704551, PR #4, 9adc96d] |
+| `docker compose -f docker-compose.local.yml config -q` | pass | valid | [local: verify-all 2026-10-17, b287a39, sandbox] | valid (CI `gate: app` step) [CI: run 38984704551, PR #4, 9adc96d] |
+| `make local-up` then `make local-smoke` (8 checks [repo: app/local-dev/src/smoke.ts L36–L66]) | pass | 8/8 (checks 1, 2, 3, 4a, 4b, 4c, 5a, 5b) | [local: verify-all 2026-10-17, b287a39, sandbox]; stack started from pre-built images (`VERIFY_COMPOSE_NO_BUILD=1`), see run metadata | 8/8 [HANDOFF §13]; CI `app-smoke` green [CI: run 38984704551, PR #4, 9adc96d] |
 
 ### 3.9 Gates covered only by CI
 
 `make verify-all` does not run Semgrep, Trivy fs, Trivy image or ZAP. The evidence for these is the CI run on each pull request, in which the scan step succeeded and the `Report (fail-open)` step was skipped [repo: docs/plans/depi-phase-f-capstone-complete.md F2].
 
-<!-- VALIDATOR-FILL -->
 | Gate | PR #1 | PR #2 | PR #3 | PR #4 | Phase F PR |
 |---|---|---|---|---|---|
-| `gate: sast (semgrep)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `gate: sca (trivy fs)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `gate: image (trivy image + sbom)` | job pass, Trivy step skipped (no Dockerfile yet) [CI: run 38478422214, PR #1, b28c75d] | as #1 [CI: run 38486109181, PR #2, 7d6c677] | as #1 [CI: run 38930049163, PR #3, 247643a] | pass; 0 fixable CRITICAL/HIGH [CI: run 38984704551, PR #4, 9adc96d; HANDOFF §13] | <!-- VALIDATOR-FILL --> |
-| `gate: dast (zap baseline)` | skipped on PRs (by design) | skipped | skipped | skipped | <!-- VALIDATOR-FILL --> |
+| `gate: sast (semgrep)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- CI-FILL --> |
+| `gate: sca (trivy fs)` | pass [CI: run 38478422214, PR #1, b28c75d] | pass [CI: run 38486109181, PR #2, 7d6c677] | pass [CI: run 38930049163, PR #3, 247643a] | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- CI-FILL --> |
+| `gate: image (trivy image + sbom)` | job pass, Trivy step skipped (no Dockerfile yet) [CI: run 38478422214, PR #1, b28c75d] | as #1 [CI: run 38486109181, PR #2, 7d6c677] | as #1 [CI: run 38930049163, PR #3, 247643a] | pass; 0 fixable CRITICAL/HIGH [CI: run 38984704551, PR #4, 9adc96d; HANDOFF §13] | <!-- CI-FILL --> |
+| `gate: dast (zap baseline)` | skipped on PRs (by design) | skipped | skipped | skipped | <!-- CI-FILL --> |
 
 The Semgrep run on PR #4 reported 95 rules and 0 findings. That was the first run of the `p/typescript` and `p/react` packs [HANDOFF §13].
 
@@ -198,7 +188,7 @@ Each phase was closed by the same pipeline: Planner → Builder → Independent 
 | Phase C (detection, hunting, sims) | `feat/s3-detection-athena-sims` / #2 | PASS WITH FIXES | 1 major, 5 minor; all fixed | [HANDOFF §11] |
 | Phase D (edge, identity, WAF, PB-04/05) | `feat/s1-s2-edge-identity-waf` / #3 | FAIL → fixed | 2 major, 9 minor | [HANDOFF §12] |
 | Phase E (app, SOC, GRC, local stack) | `feat/s2-app-soc-ui-grc` / #4 | PASS WITH FIXES | 0 critical, 0 high, 2 medium, 8 low, 2 info; all fixed in `b1d4543` | [HANDOFF §13] |
-| Phase F (this phase) | `feat/depi-phase-f-capstone-complete` / the Phase F PR | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> |
+| Phase F (this phase) | `feat/depi-phase-f-capstone-complete` / the Phase F PR | PASS WITH FIXES | 0 critical, 0 high, 2 medium, 7 low, 3 info; all addressed in `b287a39` (F1 cutover loop fail-fast; F2 Object Lock replacement warning; F3–F12 runbook, verify-all, escaping and doc fixes) | [HANDOFF §14] |
 
 The audits matter to this chapter because several of their findings were **verification defects**: tests or gates that passed for the wrong reason. These are the lessons that shaped the tests described in section 5:
 
@@ -268,34 +258,33 @@ The table lists the real tests in `soar/tests/test_sims.py` and what each one as
 
 "Last CI" means the `gate: soar (ruff + pytest)` job, which hard-fails on any failed test [repo: .github/workflows/ci.yml, `gate: soar`]. A green job therefore implies that every test below passed.
 
-<!-- VALIDATOR-FILL -->
 | Test | What it asserts | Last CI | Phase F run |
 |---|---|---|---|
-| `test_replay_local_scenario_c_contains` | With the bucket's BPA turned off, the runner exits 0 (CONTAINED, dry-run off) and BPA reads back `BlockPublicAcls: true` | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_replay_local_scenario_a_contains` | Scenario A against the tagged worker and its role id exits 0 (CONTAINED via PB-01) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_replay_local_scenario_b_contains` | Scenario B against the tagged honeytoken and its key exits 0 (CONTAINED via PB-02) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_replay_local_dry_run_is_would_contain` | With dry-run `"true"`, scenario A exits 0 as WOULD_CONTAIN_DRY_RUN | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_d_replay_local_is_would_contain` | Scenario D prints `"status": "WOULD_CONTAIN_DRY_RUN"` and `"playbook": "pb04-ecs-task-contain"`; the ECS stub has no pending responses (no StopTask or UpdateService) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_e_replay_local_is_would_contain` | Scenario E prints WOULD_CONTAIN_DRY_RUN and `pb05-waf-ip-block` | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_e_never_block_hit_is_blocked_by_guard` | An IP on the never-block list exits 1 with `"status": "BLOCKED_BY_GUARD"` | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_d_e_stay_dry_run_even_if_the_switch_flips_mid_run` (D, E) | The switch flips to `"false"` after the runner's gate; the outcome is still WOULD_CONTAIN_DRY_RUN, the switch is read exactly once, and D makes no mutating ECS call (audit A10) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_run_local_force_dry_run_ignores_a_live_switch` | `force_dry_run=True` with the switch `"false"` gives WOULD_CONTAIN_DRY_RUN and leaves the bucket's BPA unconfigured | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_runner_refuses_untagged_instance_before_acting` | An untagged instance exits 3 with "lacks", and **no incident row was created** (the gate ran before RecordDetected; audit A1) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_runner_refuses_bucket_outside_prefix` | An untagged bucket exits 3 | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_runner_refuses_untagged_account` | An account not on the allow-list exits 3 with "SAFETY" | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_require_lab_*` (accepts allow-listed account; refuses unknown account; needs an allow-list; refuses wrong region) and `test_region_must_be_resolved` | R4 rules 1 and 2, including the fail-closed unresolved region (audit A2) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_live_mode_needs_matching_confirmation` | R4 rule 4: a wrong `--confirm-live` is refused and the right one accepted | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_assert_in_scope_requires_prefix_and_tag`, `test_assert_in_scope_instance_skips_prefix`, `test_read_target_tags_*` | R4 rule 3: tag and prefix logic; an instance is gated by tag alone; unknown kinds and missing instances raise | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_live_mode_is_not_automated` | `--mode live-aws` exits 3 with "operator-run" | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_replay_aws_requires_state_machine_arn` | `--target aws` without `--state-machine-arn` exits 3 | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_replay_aws_asserts_mttc_and_contained` | With a fake Step Functions client that runs the local router and writes `containedAt` = event time + 30 s, `replay_aws` returns CONTAINED, `passed`, a computed `mttc_seconds < 60` and `sfn_status = SUCCEEDED`. The 30 s is a **test constant**, not a measurement | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_d_e_refuse_aws_targets_and_live_mode` (parametrised) | D and E refuse `--target aws` and `live-aws` with "replay --target local only" | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_d_e_refuse_unless_dry_run_reads_true` (parametrised over `"false"`, missing, `"garbage"`) | D and E exit 3 unless the switch reads exactly `"true"` | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_e_requires_ip`, `test_d_requires_task_and_service`, `test_d_refuses_missing_or_malformed_task`, `test_d_refuses_untagged_task_before_acting`, `test_e_refuses_non_blockable_ip_before_acting` | Input and scope refusals for D and E (no default IP; new-format task ARN; live task tags; documentation, private, CIDR and malformed addresses refused) | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_every_scenario_builds_a_routable_event`, `test_scenario_a_needs_instance_and_role`, `test_parser_rejects_unknown_scenario` | Every scenario's event parses as a `Finding` of the right type with ATT&CK ids; required targets are enforced | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_route_table_is_what_the_state_machine_renders` | `state-machine.tf` uses `local.route_choices`; the shared table's order is PB01, PB01, PB02, PB03, PB04, PB05; every choice requires a `resourceType`; the PB-05 choice names the trusted edge source | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_local_router_matches_the_route_table_for_every_scenario` | For every scenario and 13 mutations of each (type, resourceType and source swaps), `_route` and the table agree, and each base scenario reaches its expected playbook | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
-| `test_router_parity_ecs_and_ip_conditions` | A type alone never routes (audit A5): a non-Runtime ECS type, a missing or wrong source for E, and an exfiltration type on an S3 resource all route to no playbook | pass [CI: run 38984704551, PR #4, 9adc96d] | <!-- VALIDATOR-FILL --> |
+| `test_replay_local_scenario_c_contains` | With the bucket's BPA turned off, the runner exits 0 (CONTAINED, dry-run off) and BPA reads back `BlockPublicAcls: true` | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_replay_local_scenario_a_contains` | Scenario A against the tagged worker and its role id exits 0 (CONTAINED via PB-01) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_replay_local_scenario_b_contains` | Scenario B against the tagged honeytoken and its key exits 0 (CONTAINED via PB-02) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_replay_local_dry_run_is_would_contain` | With dry-run `"true"`, scenario A exits 0 as WOULD_CONTAIN_DRY_RUN | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_d_replay_local_is_would_contain` | Scenario D prints `"status": "WOULD_CONTAIN_DRY_RUN"` and `"playbook": "pb04-ecs-task-contain"`; the ECS stub has no pending responses (no StopTask or UpdateService) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_e_replay_local_is_would_contain` | Scenario E prints WOULD_CONTAIN_DRY_RUN and `pb05-waf-ip-block` | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_e_never_block_hit_is_blocked_by_guard` | An IP on the never-block list exits 1 with `"status": "BLOCKED_BY_GUARD"` | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_d_e_stay_dry_run_even_if_the_switch_flips_mid_run` (D, E) | The switch flips to `"false"` after the runner's gate; the outcome is still WOULD_CONTAIN_DRY_RUN, the switch is read exactly once, and D makes no mutating ECS call (audit A10) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_run_local_force_dry_run_ignores_a_live_switch` | `force_dry_run=True` with the switch `"false"` gives WOULD_CONTAIN_DRY_RUN and leaves the bucket's BPA unconfigured | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_runner_refuses_untagged_instance_before_acting` | An untagged instance exits 3 with "lacks", and **no incident row was created** (the gate ran before RecordDetected; audit A1) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_runner_refuses_bucket_outside_prefix` | An untagged bucket exits 3 | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_runner_refuses_untagged_account` | An account not on the allow-list exits 3 with "SAFETY" | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_require_lab_*` (accepts allow-listed account; refuses unknown account; needs an allow-list; refuses wrong region) and `test_region_must_be_resolved` | R4 rules 1 and 2, including the fail-closed unresolved region (audit A2) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_live_mode_needs_matching_confirmation` | R4 rule 4: a wrong `--confirm-live` is refused and the right one accepted | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_assert_in_scope_requires_prefix_and_tag`, `test_assert_in_scope_instance_skips_prefix`, `test_read_target_tags_*` | R4 rule 3: tag and prefix logic; an instance is gated by tag alone; unknown kinds and missing instances raise | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_live_mode_is_not_automated` | `--mode live-aws` exits 3 with "operator-run" | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_replay_aws_requires_state_machine_arn` | `--target aws` without `--state-machine-arn` exits 3 | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_replay_aws_asserts_mttc_and_contained` | With a fake Step Functions client that runs the local router and writes `containedAt` = event time + 30 s, `replay_aws` returns CONTAINED, `passed`, a computed `mttc_seconds < 60` and `sfn_status = SUCCEEDED`. The 30 s is a **test constant**, not a measurement | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_d_e_refuse_aws_targets_and_live_mode` (parametrised) | D and E refuse `--target aws` and `live-aws` with "replay --target local only" | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_d_e_refuse_unless_dry_run_reads_true` (parametrised over `"false"`, missing, `"garbage"`) | D and E exit 3 unless the switch reads exactly `"true"` | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_e_requires_ip`, `test_d_requires_task_and_service`, `test_d_refuses_missing_or_malformed_task`, `test_d_refuses_untagged_task_before_acting`, `test_e_refuses_non_blockable_ip_before_acting` | Input and scope refusals for D and E (no default IP; new-format task ARN; live task tags; documentation, private, CIDR and malformed addresses refused) | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_every_scenario_builds_a_routable_event`, `test_scenario_a_needs_instance_and_role`, `test_parser_rejects_unknown_scenario` | Every scenario's event parses as a `Finding` of the right type with ATT&CK ids; required targets are enforced | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_route_table_is_what_the_state_machine_renders` | `state-machine.tf` uses `local.route_choices`; the shared table's order is PB01, PB01, PB02, PB03, PB04, PB05; every choice requires a `resourceType`; the PB-05 choice names the trusted edge source | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_local_router_matches_the_route_table_for_every_scenario` | For every scenario and 13 mutations of each (type, resourceType and source swaps), `_route` and the table agree, and each base scenario reaches its expected playbook | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
+| `test_router_parity_ecs_and_ip_conditions` | A type alone never routes (audit A5): a non-Runtime ECS type, a missing or wrong source for E, and an exfiltration type on an S3 resource all route to no playbook | pass [CI: run 38984704551, PR #4, 9adc96d] | pass [local: verify-all 2026-10-17, b287a39, sandbox] |
 
 The count of 13 mutations is read from the mutation list in `_parity_events` [repo: soar/tests/test_sims.py `_parity_events`].
 
@@ -421,16 +410,15 @@ The previous record is 8/8 [HANDOFF §13]. The Phase F result is in section 3.8.
 
 The **gate self-test** (`scripts/gate-selftest.sh [secrets|sast|sca|iac|dockerfile|image|dast|all]`) builds each seed at runtime in a temporary directory and deletes it. It counts a trip only when the seeded finding's signature appears in the tool output [repo: scripts/gate-selftest.sh L11, L26–L42].
 
-<!-- VALIDATOR-FILL -->
 | Gate | Seed | Previous status | Phase F status |
 |---|---|---|---|
-| secrets | fake `ghp_` token built at runtime | ✓ tripped [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
-| iac | security group open on port 22 to `0.0.0.0/0` (CKV_AWS_24) | ✓ tripped [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
-| sast | Express route concatenating `req.query.id` into SQL | ⚠ trips `tainted-sql-string`; membership in `p/owasp-top-ten` / `p/nodejs` not confirmed [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
-| sca | lodash 4.17.4 lockfile (CVE-2019-10744) | not run [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
-| dockerfile | `FROM node:latest`, `USER root` (DL3007; CKV_DOCKER_7/8) | not recorded [HANDOFF §13 "Next"] | <!-- VALIDATOR-FILL --> |
-| image | `node:14` | not run [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
-| dast | local server without the FAIL-listed headers | not run [HANDOFF §5] | <!-- VALIDATOR-FILL --> |
+| secrets | fake `ghp_` token built at runtime | ✓ tripped [HANDOFF §5] | ✓ tripped (`matched /github-pat/`) [local: gate-selftest 2026-10-17, e240dc2, sandbox] |
+| iac | security group open on port 22 to `0.0.0.0/0` (CKV_AWS_24) | ✓ tripped [HANDOFF §5] | ✓ tripped (`matched /CKV_AWS_24/`) [local: gate-selftest 2026-10-17, e240dc2, sandbox] |
+| sast | Express route concatenating `req.query.id` into SQL | ⚠ trips `tainted-sql-string`; membership in `p/owasp-top-ten` / `p/nodejs` not confirmed [HANDOFF §5] | not provable in the sandbox: semgrep.dev returns 403, and the self-test correctly reports the tool error as NOT caught, not as a trip. To be run by S1 before `ENFORCE_GATES=true` (cutover §1) |
+| sca | lodash 4.17.4 lockfile (CVE-2019-10744) | not run [HANDOFF §5] | not run (no trivy binary in the sandbox; S1, cutover §1) |
+| dockerfile | `FROM node:latest`, `USER root` (DL3007; CKV_DOCKER_7/8) | not recorded [HANDOFF §13 "Next"] | ✓ tripped twice: hadolint and Checkov (`matched /CKV_DOCKER_7\|CKV_DOCKER_8/`); first recorded result [local: gate-selftest 2026-10-17, e240dc2, sandbox] |
+| image | `node:14` | not run [HANDOFF §5] | not run (S1, cutover §1) |
+| dast | local server without the FAIL-listed headers | not run [HANDOFF §5] | not run (S1, cutover §1) |
 
 The cutover sets `ENFORCE_GATES=true` only after `scripts/gate-selftest.sh all` shows every gate ✓ with 0 not caught and 0 skipped. If the self-test cannot complete, the merges proceed fail-open and the flip comes after the Phase F PR, with the reason recorded (D9) [repo: docs/runbooks/final-merge-and-cutover.md].
 
@@ -627,13 +615,27 @@ The DEPI rubric, the plan PDF and WBS Chapter 7 are not in the repository [repo:
 
 ### Appendix A: verify-all summary output
 
-<!-- VALIDATOR-FILL -->
 ```text
-<!-- VALIDATOR-FILL: paste the verbatim summary printed by `make verify-all`
-     (header line with commit SHA, dirty flag, UTC time and uname; one row per
-     domain: domain | result | duration | facts | log; the RESULT line; the
-     "Not covered: semgrep, trivy fs/image, ZAP: see CI" footer). Do not edit
-     the output. If the run was INCOMPLETE, say so above this block. -->
+CloudShield verify-all  commit b287a39  2026-10-17T01:46:39Z  Linux x86_64
+…(per-domain progress lines omitted; full output in the run's log directory)…
+== verify-all summary ==
+domain         result         time  log              facts
+preflight    ✓ PASS             5s  preflight.log    terraform soar docs-api spa checkov gitleaks actionlint local-smoke
+terraform    ✓ PASS           181s  terraform.log    validate 11/11, test 110 passed
+soar         ✓ PASS           255s  soar.log         711 passed, coverage 98%
+docs-api     ✓ PASS            27s  docs-api.log     290 tests, stmts 93.79% br 86.78% fn 93.12% lines 94.48%
+spa          ✓ PASS            23s  spa.log          63 tests, stmts 94.9% br 86.54% fn 94.33% lines 96.56%
+checkov      ✓ PASS            12s  checkov.log      terraform 953 passed / 0 failed; dockerfile 202 passed / 0 failed
+gitleaks     ✓ PASS             1s  gitleaks.log     30 commits scanned, no leaks found
+actionlint   ✓ PASS             0s  actionlint.log   no findings
+local-smoke  ✓ PASS            40s  local-smoke.log  8 checks, all passed
+
+Warnings
+  ! ruff 0.16.8 differs from the CI pin 0.17.0
+
+Not covered here (CI is the authority): semgrep, trivy fs, trivy image + SBOM, ZAP.
+Logs: $TMPDIR/cloudshield-verify.CKsndH/logs
+RESULT: PASS after 544s
 ```
 
 ### Appendix B: CI run links
@@ -644,7 +646,7 @@ The DEPI rubric, the plan PDF and WBS Chapter 7 are not in the repository [repo:
 | #2 `feat/s3-detection-athena-sims` | `7d6c677` | 38486109181 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38486109181 |
 | #3 `feat/s1-s2-edge-identity-waf` | `247643a` | 38930049163 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38930049163 |
 | #4 `feat/s2-app-soc-ui-grc` | `9adc96d` | 38984704551 | https://github.com/ELSHAHALY/Cloud-Shield/actions/runs/38984704551 |
-| Phase F PR `feat/depi-phase-f-capstone-complete` | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> | <!-- VALIDATOR-FILL --> |
+| Phase F PR `feat/depi-phase-f-capstone-complete` | <!-- CI-FILL --> | <!-- CI-FILL --> | <!-- CI-FILL --> |
 
 Run ids and heads are from [repo: docs/plans/depi-phase-f-capstone-complete.md F1, F2]. In each listed run, the gate jobs succeeded and the `Report (fail-open)` steps were skipped.
 

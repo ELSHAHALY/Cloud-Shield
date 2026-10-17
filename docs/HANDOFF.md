@@ -505,7 +505,71 @@ Branch `feat/depi-phase-f-capstone-complete`, from `feat/s2-app-soc-ui-grc` @ `9
 
 ### Proof
 
-<!-- VALIDATOR-FILL: final verify-all run, auditor outcome, Phase F PR CI run -->
+**Independent audit: PASS WITH FIXES** (0 critical, 0 high, 2 medium, 7 low, 3 info). All findings were addressed in `b287a39`:
+
+- **F1 (medium):** the cutover merge loop did not stop on a failed step. A red check could still be followed by a merge, because `main` is unprotected until §4. The steps are now in `merge_pair` and `wait_ci`, which return on the first error and are bounded in time; the stack runs as one `&&` chain.
+- **F2 (medium):** changing `evidence_object_lock_days` after the first apply is expected to replace the evidence bucket, and `force_destroy = true` empties it [verify with `terraform plan`]. A warning is now in the variable description, the tfvars example, the README and the demo runbook.
+- **F3–F12:**
+  - runbook notes: the `allow_update_branch` setting, the CODEOWNERS-errors check, and checking the Phase F PR's author before approving;
+  - the verify-all actionlint glob now works from any directory;
+  - a deleted tracked file no longer fails the Terraform copy;
+  - readiness-pack statuses are escaped and GFM autolinks are defused; a hostile pack rendered through pandoc's GFM reader produced no `<a>`, `<img>`, `<code>` or `<script>`;
+  - a commit cited in chapter 07 is now marked as not in this history;
+  - chapter 01 now says protection applies after the cutover;
+  - a macOS AirPlay port-5000 hint;
+  - more version WARNs (pytest, boto3, hadolint);
+  - corrected section cross-references and smoke line ranges;
+  - a per-domain log column in the summary;
+  - teardown can no longer be aborted by a second Ctrl-C, and the scratch copy is removed after a run.
+- **The auditor also verified, independently:**
+  - fault injection on verify-all (exit codes 1/2/3/130, no orphan containers);
+  - every gh flag and jq filter used in the runbook;
+  - the 7 check names against `ci.yml`;
+  - CODEOWNERS: two or more owners from different roles on every path;
+  - 35 factual spot-checks in the reports;
+  - all 80 relative links;
+  - all 13 Mermaid blocks.
+
+**Final `make verify-all`** at `b287a39` (2026-10-17T01:46Z, Linux x86_64 sandbox): **exit 0, `RESULT: PASS after 544s`, working tree unchanged.**
+
+| Domain | Result |
+|---|---|
+| terraform | fmt clean; validate 11/11; test **110 passed** (compute 22, data 6, detection 14, edge 14, identity 8, lab-targets 1, log-archive 3, soar 42) |
+| soar | ruff clean; pytest **711 passed**; coverage 97.6 % (3160/3238 statements + branches, printed as 98 %; gate 95); package byte-identical twice (`21c481c9…`); ATT&CK export in sync |
+| docs-api | lint, typecheck and OpenAPI drift clean; Jest **290 tests / 17 suites**: 94.48 % lines, 86.78 % branches |
+| spa | lint and typecheck clean; Vitest **63 tests** (13 new for the readiness pack): 96.56 % lines; production build and bundle check pass, no `local-idp` |
+| local-dev | Jest 5 |
+| checkov | terraform **953 passed / 0 failed** (121 skipped with reasons); dockerfile **202 / 0** |
+| hadolint, actionlint | clean |
+| gitleaks | 30 commits scanned, no leaks |
+| local-smoke | **8/8** |
+
+Only one WARN: ruff 0.16.8 against the CI pin 0.17.0. Semgrep, Trivy and ZAP are not covered locally; CI is the authority for them. In the sandbox, local-smoke ran on images rebuilt from this commit with the proxy CA as a BuildKit secret (`VERIFY_COMPOSE_NO_BUILD=1`). The committed Dockerfiles are unchanged, and CI `app-smoke` builds them as committed.
+
+**Gate self-test in the sandbox** (`e240dc2`):
+
+| Gate | Result |
+|---|---|
+| secrets | ✓ tripped |
+| iac | ✓ tripped (CKV_AWS_24) |
+| dockerfile | ✓ tripped on both hadolint and Checkov. This is the first recorded result for this seed. |
+| sast | Not provable here: semgrep.dev returned 403, and the script correctly counts that as "NOT caught". |
+| sca, image, dast | Not run: no trivy binary or ZAP in the sandbox. |
+
+`scripts/gate-selftest.sh all` on S1's machine therefore stays a hard precondition for `ENFORCE_GATES=true` (cutover §1).
+
+**How verify-all differs from `ci.yml`** (audit F11; none of these is a defect):
+
+- terraform runs on a scratch copy that includes untracked, non-ignored files;
+- soar uses the installed toolchain and only warns on version drift; it builds the package twice where CI builds once;
+- docs-api and local-dev each start their own moto;
+- local-dev runs inside the local-smoke domain;
+- a hadolint binary on PATH is used if present; CI always uses the pinned image;
+- actionlint is local-only;
+- `VERIFY_COMPOSE_NO_BUILD` exists for offline rehearsals;
+- Python ≥ 3.12 is accepted with a WARN, where CI pins 3.13.
+
+**Phase F PR CI:** <!-- CI-FILL -->
 
 ### Not proven
 
