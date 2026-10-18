@@ -6,6 +6,7 @@ import type { AuthBackend } from "./auth/backend";
 import { makeCan, SessionContext, type Session } from "./auth/session";
 import { Layout } from "./components/Layout";
 import { RoleGuard } from "./components/RoleGuard";
+import { SignInShell } from "./components/SignInShell";
 import { ErrorBox, Loading } from "./components/ui";
 import { GrcHub } from "./grc/GrcHub";
 import { MatrixPage } from "./grc/MatrixPage";
@@ -30,7 +31,7 @@ export function AppRoutes() {
       <Route path="/soc" element={<RoleGuard need="soc:read"><SocDashboard /></RoleGuard>} />
       <Route path="/soc/audit" element={<RoleGuard need="soc:read"><AuditPage path="/soc/audit" title="Platform audit (_platform)" /></RoleGuard>} />
       <Route path="/soc/incidents/:incidentId" element={<RoleGuard need="soc:read"><IncidentPage /></RoleGuard>} />
-      <Route path="*" element={<p className="text-sm">Page not found.</p>} />
+      <Route path="*" element={<p className="glass p-6 text-sm text-slate-300">Page not found.</p>} />
     </Routes>
   );
 }
@@ -103,15 +104,14 @@ function Shell({ backend }: { backend: AuthBackend }) {
     [me, api, backend, navigate],
   );
 
-  if (state === "loading") return <div className="p-8"><Loading /></div>;
-  if (state === "error") return <div className="p-8"><ErrorBox error={error} /></div>;
+  if (state === "loading") return <div className="grid min-h-screen place-items-center"><Loading label="Starting CloudShield…" /></div>;
+  if (state === "error") return <div className="mx-auto max-w-lg p-8"><ErrorBox error={error} /></div>;
   if (state === "signed-out" || !session) {
     const LoginForm = backend.LoginForm;
     return (
-      <div className="mx-auto mt-16 max-w-md space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-semibold">Sign in to CloudShield</h1>
+      <SignInShell local={backend.mode === "local"}>
         <LoginForm onSignedIn={start} />
-      </div>
+      </SignInShell>
     );
   }
   return (
