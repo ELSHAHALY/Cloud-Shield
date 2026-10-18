@@ -62,7 +62,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <span className="block text-[11px] text-slate-400">DevSecOps · SOAR platform</span>
             </span>
           </div>
-          <nav aria-label="Main" className="flex gap-4 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:gap-5 lg:overflow-y-auto lg:pt-2">
+          <nav aria-label="Main" className="relative flex gap-4 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:gap-5 lg:overflow-y-auto lg:pt-2">
             {sections.map((s) => (
               <div key={s.title} className="shrink-0">
                 <p className="label-caps hidden px-2 pb-1.5 lg:block">{s.title}</p>

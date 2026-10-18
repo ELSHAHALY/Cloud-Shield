@@ -152,9 +152,14 @@ export function EvidencePanel({ api, incidentId }: { api: ApiClient; incidentId:
                   <Icon name="lock" className="size-3" />
                   <span>{lockLabel(result.objectLock)}</span>
                 </span>
-                {result.objectLock.enabled === true && (
-                  <Chip tone="good" title="Write once, read many: reported by the bucket's Object Lock configuration">
-                    WORM
+                {result.objectLock.enabled === true && result.objectLock.mode === "COMPLIANCE" && (
+                  <Chip tone="good" title="Write once, read many: COMPLIANCE-mode Object Lock, as reported by the bucket">
+                    WORM (compliance)
+                  </Chip>
+                )}
+                {result.objectLock.enabled === true && result.objectLock.mode !== "COMPLIANCE" && (
+                  <Chip tone="info" title="GOVERNANCE mode can be bypassed by a principal holding s3:BypassGovernanceRetention">
+                    WORM (governance, bypassable)
                   </Chip>
                 )}
               </div>

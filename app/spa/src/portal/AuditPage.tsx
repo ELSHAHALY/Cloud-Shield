@@ -5,7 +5,7 @@ import { Card, Chip, ErrorBox, Icon, Loading, PageHeader } from "../components/u
 
 export function AuditTable({ items }: { items: AuditEvent[] }) {
   return (
-    <div className="-mx-4 overflow-x-auto md:-mx-5">
+    <div className="relative -mx-4 overflow-x-auto md:-mx-5">
       <table className="data-table">
         <thead>
           <tr>

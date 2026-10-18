@@ -204,7 +204,7 @@ export function DocumentsPage() {
         ) : items.length === 0 ? (
           <p className="text-sm text-slate-400">No documents yet.</p>
         ) : (
-          <div className="-mx-4 overflow-x-auto md:-mx-5">
+          <div className="relative -mx-4 overflow-x-auto md:-mx-5">
             <table className="data-table">
               <thead>
                 <tr>

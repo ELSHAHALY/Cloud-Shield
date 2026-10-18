@@ -49,7 +49,7 @@ export function MatrixPage() {
       />
       <Disclaimer text={m.disclaimer} />
       <Card title={`Controls (version ${m.version}, reviewed ${m.lastReviewed})`} icon="grid" accent="cyan" subtitle="Solid green border: built. Dashed border: a mapping only. Each cell says which in words.">
-        <div className="-mx-4 overflow-x-auto md:-mx-5">
+        <div className="relative -mx-4 overflow-x-auto md:-mx-5">
           <table className="data-table">
             <thead>
               <tr>

@@ -41,7 +41,7 @@ function KpiRow({ o, posture, postureError }: { o: SocOverview; posture: Posture
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-      <StatCard label={`Need analyst (${win})`} value={needAnalyst} tone={needTone} icon="user" hint={`DETECTED ${byStatus.DETECTED} · NO_PLAYBOOK_ANALYST_REVIEW ${byStatus.NO_PLAYBOOK_ANALYST_REVIEW} · BLOCKED_BY_GUARD ${byStatus.BLOCKED_BY_GUARD} · FAILED ${byStatus.FAILED}`} />
+      <StatCard label={`Need analyst (${win})`} value={needAnalyst} tone={needTone} icon="user" hint={`detected ${byStatus.DETECTED} · no playbook ${byStatus.NO_PLAYBOOK_ANALYST_REVIEW} · guard-blocked ${byStatus.BLOCKED_BY_GUARD} · failed ${byStatus.FAILED}`} />
       <StatCard
         label={`MTTC p50 (${win})`}
         value={mttc.p50 === null ? "—" : mttc.p50.toFixed(1)}
@@ -92,7 +92,7 @@ export function SocDashboard() {
       {o && (
         <>
           <div className="grid gap-5 lg:grid-cols-2">
-            <Card title="Mean time to contain (24 h)" icon="clock" subtitle={`Last, p50, p90 and max as reported · ${o.metrics.mttc.targetSeconds} s is the target`}>
+            <Card title="Time to contain (24 h)" icon="clock" subtitle={`Last, p50, p90 and max as reported · ${o.metrics.mttc.targetSeconds} s is the target`}>
               <MttcMeter mttc={o.metrics.mttc} />
             </Card>
             <Card title="ATT&CK tactics (24 h)" icon="target" subtitle="Incidents by tactic, with technique ids">

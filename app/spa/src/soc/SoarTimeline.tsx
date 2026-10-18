@@ -47,9 +47,9 @@ export function SoarTimeline({ entries, active = false }: { entries: TimelineEnt
             <div className="min-w-0 pb-5 text-sm md:pr-4 md:pb-0">
               <p className="flex flex-wrap items-baseline gap-x-2">
                 <span className={`text-[11px] font-semibold tracking-[0.1em] uppercase ${s.label}`}>{KIND[e.kind]}</span>
-                {e.at ? <span className="font-mono text-[11px] text-slate-400">· {e.at}</span> : null}
                 {pulsing && <span className="text-[11px] font-medium text-cyan-300">· in progress</span>}
               </p>
+              {e.at ? <p className="mt-0.5 font-mono text-[11px] break-all text-slate-400">{e.at}</p> : null}
               <span className="mt-0.5 block text-slate-200">{e.label}</span>
               {e.detail && <span className="mt-1 block break-all font-mono text-xs text-slate-400">{e.detail}</span>}
             </div>

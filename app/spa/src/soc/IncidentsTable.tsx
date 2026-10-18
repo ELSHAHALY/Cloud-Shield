@@ -76,7 +76,7 @@ export function IncidentsTable({ incidents, targetSeconds = 60 }: { incidents: I
           {rows.length} of {incidents.length} shown · MTTC mark: <span className="text-emerald-300">≤ {targetSeconds} s target</span> / <span className="text-amber-300">over</span>
         </p>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-slate-800">
+      <div className="relative overflow-x-auto rounded-lg border border-slate-800">
         <table className="data-table">
           <thead className="bg-slate-900/80">
             <tr>
@@ -120,15 +120,15 @@ export function IncidentsTable({ incidents, targetSeconds = 60 }: { incidents: I
                     <Icon name="chevron" className="size-3 opacity-0 transition-opacity group-hover:opacity-100" />
                   </Link>
                 </td>
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-2.5 whitespace-nowrap">
                   <StatusChip incident={i} />
                 </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-slate-300">{i.findingType ?? "—"}</td>
+                <td className="max-w-xs px-3 py-2.5 font-mono text-xs break-all text-slate-300">{i.findingType ?? "—"}</td>
                 <td className="px-3 py-2.5">
                   <Severity value={i.severity} />
                 </td>
                 <td className="px-3 py-2.5 text-slate-300">{i.tactic}</td>
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-2.5 whitespace-nowrap">
                   <Mttc seconds={i.mttcSeconds} target={targetSeconds} />
                 </td>
               </tr>
