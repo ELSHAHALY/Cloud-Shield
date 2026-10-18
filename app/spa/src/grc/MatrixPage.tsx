@@ -1,7 +1,29 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import type { ResponsibilityMatrix } from "../api/types";
 import { useSession } from "../auth/session";
-import { Card, Disclaimer, ErrorBox, Loading, VerifyBadge } from "../components/ui";
+import { Card, Chip, Disclaimer, ErrorBox, Icon, Loading, PageHeader, VerifyBadge, type Tone } from "../components/ui";
+
+type Cell = ResponsibilityMatrix["controls"][number]["cells"]["aws"];
+
+const RESPONSIBILITY_TONE: Record<Cell["responsibility"], Tone> = { provider: "info", shared: "neutral", customer: "warn" };
+
+function MatrixCell({ cell }: { cell: Cell }) {
+  const built = cell.status === "built";
+  return (
+    <div className={`h-full space-y-1.5 rounded-lg border p-2.5 ${built ? "border-emerald-500/30 bg-emerald-500/[0.05]" : "border-dashed border-slate-700 bg-slate-950/30"}`}>
+      <span className="block font-medium text-slate-100">{cell.service}</span>
+      <span className="flex flex-wrap items-center gap-1.5">
+        <Chip tone={RESPONSIBILITY_TONE[cell.responsibility]}>{cell.responsibility}</Chip>
+        <span className={`inline-flex items-center gap-1 text-xs ${built ? "text-emerald-200" : "text-slate-400"}`}>
+          <Icon name={built ? "check" : "layers"} className="size-3.5" />
+          {built ? "built" : "mapped, not built"}
+        </span>
+      </span>
+      {cell.verify && <VerifyBadge />}
+    </div>
+  );
+}
 
 export function MatrixPage() {
   const { api } = useSession();
@@ -13,49 +35,58 @@ export function MatrixPage() {
   if (error) return <ErrorBox error={error} />;
   if (!m) return <Loading />;
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Shared-responsibility matrix</h1>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Governance"
+        title="Shared-responsibility matrix"
+        subtitle="Who owns each control on each cloud, and whether this project built it or only mapped it."
+        actions={
+          <Link to="/grc" className="btn-secondary no-underline">
+            <Icon name="scale" className="size-4" />
+            GRC hub
+          </Link>
+        }
+      />
       <Disclaimer text={m.disclaimer} />
-      <Card title={`Controls (version ${m.version}, reviewed ${m.lastReviewed})`}>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="text-xs uppercase text-slate-600">
+      <Card title={`Controls (version ${m.version}, reviewed ${m.lastReviewed})`} icon="grid" accent="cyan" subtitle="Solid green border: built. Dashed border: a mapping only. Each cell says which in words.">
+        <div className="-mx-4 overflow-x-auto md:-mx-5">
+          <table className="data-table">
+            <thead>
               <tr>
-                <th className="py-1 pr-3">Control</th>
+                <th className="px-4 py-2 md:pl-5">Control</th>
                 {m.providers.map((p) => (
-                  <th key={p} className="py-1 pr-3">
-                    {p.toUpperCase()}
+                  <th key={p} className="min-w-48 px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5">
+                      <Icon name="server" className="size-3.5 text-slate-500" />
+                      {p.toUpperCase()}
+                    </span>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {m.controls.map((c) => (
-                <tr key={c.id} className="border-t border-slate-100 align-top">
-                  <td className="py-2 pr-3 font-medium">{c.control}</td>
-                  {m.providers.map((p) => {
-                    const cell = c.cells[p];
-                    return (
-                      <td key={p} className="py-2 pr-3">
-                        <span className="block">{cell.service}</span>
-                        <span className="block text-xs text-slate-600">
-                          {cell.responsibility} · {cell.status === "built" ? "built" : "mapped, not built"}
-                        </span>
-                        {cell.verify && <VerifyBadge />}
-                      </td>
-                    );
-                  })}
+                <tr key={c.id} className="align-top">
+                  <td className="px-4 py-3 md:pl-5">
+                    <span className="block font-medium text-slate-100">{c.control}</span>
+                    <span className="mt-0.5 block font-mono text-[11px] text-slate-400">{c.layer}</span>
+                  </td>
+                  {m.providers.map((p) => (
+                    <td key={p} className="px-3 py-3">
+                      <MatrixCell cell={c.cells[p]} />
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
-      <Card title="Layers">
-        <ul className="text-sm">
+      <Card title="Layers" icon="layers">
+        <ul className="divide-y divide-slate-800/70 text-sm">
           {m.layers.map((l) => (
-            <li key={l.layer} className="py-1">
-              <span className="font-medium">{l.layer}:</span> {l.owner}. <span className="text-slate-600">{l.notes}</span>
+            <li key={l.layer} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-2">
+              <span className="font-medium text-slate-100">{l.layer}:</span> <span className="text-slate-300">{l.owner}.</span> <span className="text-slate-400">{l.notes}</span>
             </li>
           ))}
         </ul>
