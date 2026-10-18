@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router";
 import type { Permission } from "../api/types";
+import { roleInfo } from "../auth/roles";
 import { useSession } from "../auth/session";
 import { LiveContext, type LiveState } from "./live";
 import { Icon, type IconName } from "./ui";
@@ -33,9 +34,17 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-const ROLE: Record<string, string> = { admin: "Tenant admin", member: "Member", auditor: "Auditor", "secops-analyst": "SecOps analyst" };
-
 function LiveIndicator({ live }: { live: LiveState }) {
+  // usePolling pauses while the tab is hidden; say so instead of claiming "live" (review F8c).
+  const [hidden, setHidden] = useState(() => typeof document !== "undefined" && document.visibilityState === "hidden");
+  useEffect(() => {
+    const on = () => setHidden(document.visibilityState === "hidden");
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  if (hidden) {
+    return <span className="hidden items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-xs text-slate-400 sm:inline-flex">{live.label}: paused (tab hidden)</span>;
+  }
   return (
     <span className="hidden items-center gap-2 rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-xs text-slate-300 sm:inline-flex" title={live.updatedAt ? `Last update ${live.updatedAt.toLocaleTimeString()}` : "Waiting for the first update"}>
       {live.failing ? <span className="size-2 rounded-full bg-rose-400" aria-hidden="true" /> : <span className="live-dot" aria-hidden="true" />}
@@ -99,7 +108,7 @@ export function Layout({ children }: { children: ReactNode }) {
               </span>
               {me.groups.map((g) => (
                 <span key={g} className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-200">
-                  {ROLE[g] ?? g}
+                  {roleInfo(g).label}
                 </span>
               ))}
               {live && <LiveIndicator live={live} />}

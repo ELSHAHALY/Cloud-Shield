@@ -4,7 +4,7 @@ import { Icon, type IconName } from "./ui";
 // Claims here are design facts of this repository, worded as such; none is a
 // measurement (no MTTC has been measured on AWS yet).
 const POINTS: { icon: IconName; title: string; text: string }[] = [
-  { icon: "fingerprint", title: "Cognito with TOTP MFA", text: "Admin-created accounts, tokens kept in session storage only." },
+  { icon: "fingerprint", title: "Cognito with TOTP MFA", text: "MFA required by default; admin-created accounts; tokens kept in session storage only." },
   { icon: "lock", title: "Tenant-scoped API", text: "Every request is authorised server-side from the verified token." },
   { icon: "radar", title: "Automated containment", text: "SOAR playbooks contain behind a fail-closed guard; eradication stays human-gated." },
 ];

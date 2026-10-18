@@ -20,6 +20,17 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+// The API's default upload limit (MAX_UPLOAD_BYTES, 5 MiB); the server enforces its own value.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const UNSUPPORTED = "Only PDF, text, PNG, JPEG and DOCX files are accepted.";
+const TOO_LARGE = "Files over 5 MiB are not accepted (the API's default limit).";
+
+function rejectReason(f: File): string | null {
+  if (!ACCEPTED[f.type]) return UNSUPPORTED;
+  if (f.size > MAX_UPLOAD_BYTES) return TOO_LARGE;
+  return null;
+}
+
 export function DocumentsPage() {
   const { api, can } = useSession();
   const [items, setItems] = useState<DocumentMeta[] | null>(null);
@@ -31,6 +42,11 @@ export function DocumentsPage() {
   const [tags, setTags] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<"ok" | "warn">("ok");
+  const warn = (text: string) => {
+    setNoticeTone("warn");
+    setNotice(text);
+  };
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -70,22 +86,41 @@ export function DocumentsPage() {
   function onDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (!dropped) return;
+    // The native input's `accept` filter does not apply to a drop, so check here (security review F6).
+    if (e.dataTransfer.files.length !== 1) {
+      warn("Drop one file at a time.");
+      return;
+    }
+    const dropped = e.dataTransfer.files[0]!;
+    const problem = rejectReason(dropped);
+    if (problem) {
+      warn(problem);
+      return;
+    }
+    setNotice(null);
     setFile(dropped);
-    // Keep the required native input in sync so form validation still sees the file.
-    if (inputRef.current) inputRef.current.files = e.dataTransfer.files;
+    // Keep the required native input in sync (exactly this one file) so form validation still sees it.
+    if (inputRef.current) {
+      const dt = new DataTransfer();
+      dt.items.add(dropped);
+      inputRef.current.files = dt.files;
+    }
   }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      warn(TOO_LARGE);
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
       const meta = await uploadDocument(api, { file, title: title || file.name, classification, tags: [...new Set(tagList)] });
+      setNoticeTone("ok");
       setNotice(`Uploaded "${meta.title}" (SHA-256 verified by the server).`);
       setFile(null);
       if (inputRef.current) inputRef.current.value = "";
@@ -93,7 +128,7 @@ export function DocumentsPage() {
       setTags("");
       setReload((n) => n + 1);
     } catch (err) {
-      if (err instanceof Error && err.message === "UNSUPPORTED_TYPE") setNotice("Only PDF, text, PNG, JPEG and DOCX files are accepted.");
+      if (err instanceof Error && err.message === "UNSUPPORTED_TYPE") warn(UNSUPPORTED);
       else setError(err);
     } finally {
       setBusy(false);
@@ -120,8 +155,8 @@ export function DocumentsPage() {
       />
       <ErrorBox error={error} />
       {notice && (
-        <p role="status" className="flex items-start gap-2 rounded-xl border border-cyan-500/35 bg-cyan-500/[0.08] p-3 text-sm text-cyan-100">
-          <Icon name="check" className="mt-0.5 size-4 shrink-0 text-cyan-300" />
+        <p role="status" className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${noticeTone === "ok" ? "border-cyan-500/35 bg-cyan-500/[0.08] text-cyan-100" : "border-amber-500/40 bg-amber-500/[0.08] text-amber-100"}`}>
+          <Icon name={noticeTone === "ok" ? "check" : "alert"} className={`mt-0.5 size-4 shrink-0 ${noticeTone === "ok" ? "text-cyan-300" : "text-amber-300"}`} />
           <span>{notice}</span>
         </p>
       )}

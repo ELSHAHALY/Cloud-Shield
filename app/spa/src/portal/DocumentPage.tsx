@@ -84,7 +84,7 @@ export function DocumentPage() {
         title="Metadata"
         icon="file-lock"
         accent="cyan"
-        subtitle="Stored with SSE-KMS (data CMK) on AWS; the SHA-256 was re-computed by the server on upload."
+        subtitle={doc.status === "AVAILABLE" ? "Stored with SSE-KMS (data CMK) on AWS; the SHA-256 was re-computed by the server on upload." : "Upload not finished: the SHA-256 shown is the one the browser declared; the server checks it when the bytes arrive."}
         actions={
           doc.status === "AVAILABLE" && (
             <button type="button" className="btn-primary" onClick={() => void downloadDocument(api, doc.docId).catch(setError)}>

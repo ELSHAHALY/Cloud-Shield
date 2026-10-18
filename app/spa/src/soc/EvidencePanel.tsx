@@ -75,6 +75,27 @@ export async function downloadReport(api: ApiClient, incidentId: string, format:
   URL.revokeObjectURL(url);
 }
 
+/** WORM only for COMPLIANCE mode with a default rule; GOVERNANCE can be bypassed (security review F1). */
+function RetentionChip({ mode, days }: { mode: string | null; days: number | null }) {
+  if (mode === "COMPLIANCE" && days)
+    return (
+      <Chip tone="good" title="Write once, read many: COMPLIANCE-mode default retention, as reported by the bucket">
+        WORM (compliance)
+      </Chip>
+    );
+  if (mode === "GOVERNANCE" && days)
+    return (
+      <Chip tone="info" title="GOVERNANCE mode can be bypassed by a principal holding s3:BypassGovernanceRetention">
+        Governance retention (bypassable)
+      </Chip>
+    );
+  return (
+    <Chip tone="warn" title="Object Lock is enabled but the bucket reports no default retention rule">
+      No default retention
+    </Chip>
+  );
+}
+
 export function EvidencePanel({ api, incidentId }: { api: ApiClient; incidentId: string }) {
   const [result, setResult] = useState<EvidenceVerification | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -152,16 +173,7 @@ export function EvidencePanel({ api, incidentId }: { api: ApiClient; incidentId:
                   <Icon name="lock" className="size-3" />
                   <span>{lockLabel(result.objectLock)}</span>
                 </span>
-                {result.objectLock.enabled === true && result.objectLock.mode === "COMPLIANCE" && (
-                  <Chip tone="good" title="Write once, read many: COMPLIANCE-mode Object Lock, as reported by the bucket">
-                    WORM (compliance)
-                  </Chip>
-                )}
-                {result.objectLock.enabled === true && result.objectLock.mode !== "COMPLIANCE" && (
-                  <Chip tone="info" title="GOVERNANCE mode can be bypassed by a principal holding s3:BypassGovernanceRetention">
-                    WORM (governance, bypassable)
-                  </Chip>
-                )}
+                {result.objectLock.enabled === true && <RetentionChip mode={result.objectLock.mode} days={result.objectLock.days} />}
               </div>
             </div>
             {result.checks.length > 0 && (

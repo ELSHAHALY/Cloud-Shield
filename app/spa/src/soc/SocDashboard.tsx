@@ -17,12 +17,13 @@ function KpiRow({ o, posture, postureError }: { o: SocOverview; posture: Posture
   const { byStatus, mttc } = o.metrics;
   const win = WINDOW[o.metrics.window] ?? o.metrics.window;
 
-  const needAnalyst = byStatus.DETECTED + byStatus.NO_PLAYBOOK_ANALYST_REVIEW + byStatus.BLOCKED_BY_GUARD + byStatus.FAILED;
+  // Dry-run incidents changed nothing, so they still need a human (security review F3).
+  const needAnalyst = byStatus.DETECTED + byStatus.NO_PLAYBOOK_ANALYST_REVIEW + byStatus.BLOCKED_BY_GUARD + byStatus.FAILED + byStatus.WOULD_CONTAIN_DRY_RUN;
   const needTone: Tone = byStatus.FAILED > 0 ? "bad" : needAnalyst > 0 ? "warn" : "good";
 
   const verdict = mttcVerdict(mttc.p50, mttc.targetSeconds);
   const trend = o.incidents
-    .filter((i) => i.status === "CONTAINED" && i.mttcSeconds !== null)
+    .filter((i) => i.status === "CONTAINED" && i.mttcSeconds !== null && (i.eventTime ?? "") >= o.metrics.since)
     .sort((a, b) => ((a.containedAt ?? a.eventTime ?? "") < (b.containedAt ?? b.eventTime ?? "") ? -1 : 1))
     .map((i) => i.mttcSeconds as number);
 
@@ -31,17 +32,22 @@ function KpiRow({ o, posture, postureError }: { o: SocOverview; posture: Posture
 
   const scan = posture?.image.ecrScan ?? null;
   const cveKnown = scan !== null && scan.status === "COMPLETE" && scan.critical !== null;
-  const cveTone: Tone = cveKnown ? (scan.critical === 0 ? "good" : "bad") : "neutral";
-  const cveHint = !posture ? (postureError ? "posture unavailable" : "loading posture…") : cveKnown ? `ECR basic scan of the running digest${scan.high !== null ? ` · ${scan.high} high` : ""}` : scan ? `no result (${scan.status})` : "ECR scan unavailable";
+  // A failed later poll keeps the old data: say so and drop the reassuring tone (review F5).
+  const stale = !!posture && postureError;
+  const staleNote = stale ? ` · stale: last refresh failed (posture from ${posture.generatedAt})` : "";
+  const cveTone: Tone = stale ? "neutral" : cveKnown ? (scan.critical === 0 ? "good" : "bad") : "neutral";
+  const cveHint = (!posture ? (postureError ? "posture unavailable" : "loading posture…") : cveKnown ? `ECR basic scan of the running digest${scan.high !== null ? ` · ${scan.high} high` : ""}` : scan ? `no result (${scan.status})` : "ECR scan unavailable") + staleNote;
 
   const dryRun = posture ? posture.containment.dryRun : null;
-  const mode = dryRun === null ? "Unknown" : dryRun ? "Dry run" : "Live";
-  const modeTone: Tone = dryRun === null ? "neutral" : dryRun ? "warn" : "info";
-  const modeHint = !posture ? (postureError ? "posture unavailable" : "loading posture…") : `playbooks ${posture.containment.playbooksEnabled ? "enabled" : "disabled"}${dryRun === null ? " · switch not readable" : dryRun ? " · no changes are made" : ""}`;
+  const enabled = posture ? posture.containment.playbooksEnabled : null;
+  // Disabled playbooks contain nothing, whatever the dry-run switch says (review F2).
+  const mode = !posture ? "Unknown" : !enabled ? "Disabled" : dryRun === null ? "Unknown" : dryRun ? "Dry run" : "Live";
+  const modeTone: Tone = stale || mode === "Unknown" ? "neutral" : mode === "Live" ? "info" : "warn";
+  const modeHint = (!posture ? (postureError ? "posture unavailable" : "loading posture…") : `playbooks ${enabled ? "enabled" : "disabled: no automated containment"}${enabled ? (dryRun === null ? " · switch not readable" : dryRun ? " · no changes are made" : "") : ""}`) + staleNote;
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-      <StatCard label={`Need analyst (${win})`} value={needAnalyst} tone={needTone} icon="user" hint={`detected ${byStatus.DETECTED} · no playbook ${byStatus.NO_PLAYBOOK_ANALYST_REVIEW} · guard-blocked ${byStatus.BLOCKED_BY_GUARD} · failed ${byStatus.FAILED}`} />
+      <StatCard label={`Need analyst (${win})`} value={needAnalyst} tone={needTone} icon="user" hint={`detected ${byStatus.DETECTED} · no playbook ${byStatus.NO_PLAYBOOK_ANALYST_REVIEW} · guard-blocked ${byStatus.BLOCKED_BY_GUARD} · dry run ${byStatus.WOULD_CONTAIN_DRY_RUN} · failed ${byStatus.FAILED}`} />
       <StatCard
         label={`MTTC p50 (${win})`}
         value={mttc.p50 === null ? "—" : mttc.p50.toFixed(1)}

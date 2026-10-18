@@ -33,7 +33,7 @@ export function SoarTimeline({ entries, active = false }: { entries: TimelineEnt
   return (
     <ol className="flex flex-col md:flex-row md:flex-wrap md:gap-y-6" aria-label="SOAR timeline">
       {entries.map((e, i) => {
-        const s = NODE[e.kind];
+        const s = NODE[e.kind] ?? NODE.ANALYST;
         const last = i === entries.length - 1;
         const pulsing = active && last;
         return (
@@ -46,7 +46,7 @@ export function SoarTimeline({ entries, active = false }: { entries: TimelineEnt
             </div>
             <div className="min-w-0 pb-5 text-sm md:pr-4 md:pb-0">
               <p className="flex flex-wrap items-baseline gap-x-2">
-                <span className={`text-[11px] font-semibold tracking-[0.1em] uppercase ${s.label}`}>{KIND[e.kind]}</span>
+                <span className={`text-[11px] font-semibold tracking-[0.1em] uppercase ${s.label}`}>{KIND[e.kind] ?? e.kind}</span>
                 {pulsing && <span className="text-[11px] font-medium text-cyan-300">· in progress</span>}
               </p>
               {e.at ? <p className="mt-0.5 font-mono text-[11px] break-all text-slate-400">{e.at}</p> : null}

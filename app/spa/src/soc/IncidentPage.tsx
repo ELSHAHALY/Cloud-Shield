@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import type { IncidentDetail } from "../api/types";
 import { useSession } from "../auth/session";
-import { Card, Chip, ErrorBox, Icon, Loading } from "../components/ui";
+import { Card, Chip, ErrorBox, Loading } from "../components/ui";
 import { EvidencePanel } from "./EvidencePanel";
 import { SoarTimeline } from "./SoarTimeline";
 import { StatusChip } from "./status";
@@ -122,9 +122,8 @@ function Checklist({ title, items }: { title: string; items: string[] }) {
         <ul className="space-y-2">
           {items.map((x) => (
             <li key={x} className="flex items-start gap-2 text-slate-200">
-              <span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded border border-slate-600 text-slate-400" aria-hidden="true">
-                <Icon name="check" className="size-3" />
-              </span>
+              {/* An empty box: these are open human steps; nothing records them as done (review F4). */}
+              <span className="mt-1 size-3.5 shrink-0 rounded-sm border border-slate-500" aria-hidden="true" />
               <span>{x}</span>
             </li>
           ))}
