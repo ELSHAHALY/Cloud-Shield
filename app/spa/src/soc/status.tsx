@@ -1,17 +1,27 @@
 import type { IncidentSummary } from "../api/types";
-import { Chip } from "../components/ui";
+import { Chip, type Tone } from "../components/ui";
 
 export const STATUSES = ["DETECTED", "CONTAINED", "WOULD_CONTAIN_DRY_RUN", "BLOCKED_BY_GUARD", "NO_PLAYBOOK_ANALYST_REVIEW", "FAILED"] as const;
 
-const TONE: Record<string, "good" | "warn" | "bad" | "info" | "neutral"> = {
+// Cyan = in progress, emerald = contained, amber = dry run / needs an analyst,
+// rose = failed. The chip always writes the API's displayStatus as text.
+const TONE: Record<string, Tone> = {
+  DETECTED: "info",
   CONTAINED: "good",
-  WOULD_CONTAIN_DRY_RUN: "info",
+  WOULD_CONTAIN_DRY_RUN: "warn",
   BLOCKED_BY_GUARD: "warn",
   NO_PLAYBOOK_ANALYST_REVIEW: "warn",
   FAILED: "bad",
-  DETECTED: "neutral",
 };
 
+export function statusTone(status: string): Tone {
+  return TONE[status] ?? "neutral";
+}
+
 export function StatusChip({ incident }: { incident: Pick<IncidentSummary, "status" | "displayStatus"> }) {
-  return <Chip tone={TONE[incident.status] ?? "neutral"}>{incident.displayStatus}</Chip>;
+  return (
+    <Chip tone={statusTone(incident.status)} dot title={incident.status}>
+      {incident.displayStatus}
+    </Chip>
+  );
 }
